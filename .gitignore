@@ -1,0 +1,55 @@
+# Guide & Specification Docs (Excluded from GitHub per project rules)
+Faceless Shorts Automation.md
+WORKFLOW_AND_REQUIREMENTS.md
+
+# Python Virtual Environment & Bytecode
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Node / React Dashboard Dependencies & Builds
+node_modules/
+dashboard/node_modules/
+dashboard/dist/
+npm-debug.log*
+
+# Generated Data & Scripts (Keep folder structure via .gitkeep, ignore generated files)
+data/pipeline_state.json
+data/live_progress.json
+data/scripts/*
+!data/scripts/.gitkeep
+data/qa_reports/*
+!data/qa_reports/.gitkeep
+
+# Generated Videos, Audio, Subtitles & Temp Renders (Keep folders via .gitkeep)
+output/tmp/
+output/videos/*
+!output/videos/.gitkeep
+output/audio/*
+!output/audio/.gitkeep
+output/subtitles/*
+!output/subtitles/.gitkeep
+output/instagram_ready/*
+!output/instagram_ready/.gitkeep
+
+# Generated Procedural Audio Assets & User Reference Reels
+assets/sfx/*
+!assets/sfx/.gitkeep
+assets/music/*
+!assets/music/.gitkeep
+assets/reference_reels/*
+!assets/reference_reels/.gitkeep
+
+# Credentials & Environment Variables
+.env
+*.local
+config/credentials/
+client_secret*.json
+token.json
+
+*.local
+config/credentials/
+client_secret*.json
+token.json
