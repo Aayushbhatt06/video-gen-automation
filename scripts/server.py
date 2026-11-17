@@ -164,6 +164,7 @@ def create_scripts(body: dict) -> list[Path]:
             "style": style,
             "spoken_language": lang,
             "spoken_language_label": LANG_LABELS[lang],
+            "tts_engine": body.get("tts_engine", "qwen3"),
             "subtitle_language": "en",
             "scheduled_upload_time": state["schedule"].get("upload_time", "21:00"),
             "hook_score": tpl_base.get("hook_score", 9.7),
@@ -578,20 +579,26 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
             if not script_path.exists():
                 self._send_json({"error": f"Script {vid_id} not found"}, 404)
                 return
-            # Allow user to override spoken_language directly at render time
-            if body.get("spoken_language"):
+            # Allow user to override spoken_language or tts_engine directly at render time
+            if body.get("spoken_language") or body.get("tts_engine"):
                 script_obj = json.loads(script_path.read_text(encoding="utf-8"))
-                req_lang = body["spoken_language"]
-                if req_lang != script_obj.get("spoken_language"):
+                changed = False
+                if body.get("tts_engine") and body["tts_engine"] != script_obj.get("tts_engine"):
+                    script_obj["tts_engine"] = body["tts_engine"]
+                    changed = True
+                req_lang = body.get("spoken_language")
+                if req_lang and req_lang != script_obj.get("spoken_language"):
                     script_obj["spoken_language"] = req_lang
                     script_obj["spoken_language_label"] = LANG_LABELS.get(req_lang, req_lang)
                     script_obj["beats"] = _build_beats_for_lang(script_obj.get("beats", []), req_lang)
                     scene_planner.plan_story_scenes(script_obj)
+                    changed = True
+                if changed:
                     script_path.write_text(json.dumps(script_obj, indent=2, ensure_ascii=False), encoding="utf-8")
                     state = load_state()
                     for v in state.get("videos", []):
                         if v["id"] == vid_id:
-                            v["spoken_language"] = req_lang
+                            v["spoken_language"] = script_obj["spoken_language"]
                             v["spoken_language_label"] = script_obj["spoken_language_label"]
                             v["script"] = script_obj
                     save_state(state)

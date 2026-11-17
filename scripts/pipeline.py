@@ -2,8 +2,9 @@
 Faceless Shorts Renderer v3 — bright 2D cartoon, prop-driven, Whisper-synced.
 
 Stages
-  1. Voice:     edge-tts neural voices (default hi-IN-MadhurNeural, en-US-AndrewNeural for English)
-  2. Timing:    faster-whisper word timestamps on each beat's audio (fallback: edge-tts WordBoundary,
+  1. Voice:     Alibaba Qwen3-TTS (`0.6B-CustomVoice` on CUDA GPU) for English/Global languages,
+                with automatic `edge-tts` support for Hinglish (`hi`) and fallback
+  2. Timing:    faster-whisper word timestamps on each beat's audio (fallback: WordBoundary,
                 then energy detection) -> English-only Hormozi-style .ASS captions
   3. Props:     props_engine extracts story props per beat and animates them as 2D cartoons
                 (pop/drop/slide entrances, idle motion, Ken Burns camera zoom, wipe transitions)
@@ -12,16 +13,14 @@ Stages
 Progress + logs stream to data/live_progress.json for the React dashboard.
 """
 import argparse
-import asyncio
 import json
 import math
+import re
 import shutil
 import subprocess
 import wave
 from datetime import datetime
 from pathlib import Path
-
-import re
 
 import numpy as np
 
@@ -29,31 +28,12 @@ import captions
 import character_rig
 import props_engine
 import scene_planner
+import tts_engine
 from pipeline_fonts import font_path, get_font
 from sfx_generator import SAMPLE_RATE, ensure_audio_assets
 
 FPS = 30
 W, H = 1080, 1920
-
-VOICE_MAP = {
-    "hi": "hi-IN-MadhurNeural",
-    "en": "en-US-AndrewNeural",
-    "es": "es-MX-JorgeNeural",
-    "fr": "fr-FR-HenriNeural",
-    "ja": "ja-JP-KeitaNeural",
-    "pt": "pt-BR-AntonioNeural",
-    "de": "de-DE-ConradNeural",
-}
-
-VOICE_MAP_FEMALE = {
-    "hi": "hi-IN-SwaraNeural",
-    "en": "en-US-AriaNeural",
-    "es": "es-MX-DaliaNeural",
-    "fr": "fr-FR-DeniseNeural",
-    "ja": "ja-JP-NanamiNeural",
-    "pt": "pt-BR-FranciscaNeural",
-    "de": "de-DE-KatjaNeural",
-}
 
 
 # ------------------------------------------------------------------ progress
@@ -113,37 +93,10 @@ def _write_wav(path: Path, samples: np.ndarray) -> None:
         wf.writeframes(pcm.tobytes())
 
 
-async def _edge_tts(text: str, voice: str, out_mp3: Path) -> list[tuple[float, float, str]]:
-    """Synthesize with edge-tts, capturing WordBoundary events. Returns boundaries (sec)."""
-    import edge_tts
-
-    try:
-        comm = edge_tts.Communicate(text, voice, rate="+18%", boundary="WordBoundary")
-    except TypeError:
-        comm = edge_tts.Communicate(text, voice, rate="+18%")
-    bounds, audio = [], bytearray()
-    async for chunk in comm.stream():
-        if chunk["type"] == "audio":
-            audio.extend(chunk["data"])
-        elif chunk["type"] == "WordBoundary":
-            s = chunk["offset"] / 1e7
-            bounds.append((s, s + chunk["duration"] / 1e7, chunk.get("text", "")))
-    out_mp3.write_bytes(bytes(audio))
-    return bounds
-
-
-def _offline_voice(text: str, out_wav: Path, dur: float) -> None:
-    n = int(SAMPLE_RATE * dur)
-    t = np.linspace(0, dur, n, endpoint=False, dtype=np.float32)
-    f0 = 140 + 25 * np.sin(2 * np.pi * 1.8 * t)
-    sig = (np.sin(2 * np.pi * f0 * t) * 0.5 + np.sin(4 * np.pi * f0 * t) * 0.2) * np.abs(np.sin(2 * np.pi * 4.4 * t)) ** 0.6
-    _write_wav(out_wav, sig * 0.6)
-
-
 def build_audio(script: dict, base_dir: Path, ffmpeg: str) -> dict:
     vid_id = script["id"]
     lang = script.get("spoken_language", "hi")
-    voice = VOICE_MAP.get(lang, VOICE_MAP["hi"])
+    preferred_tts = script.get("tts_engine", "qwen3")
     beats = script.get("beats", [])
     nb = max(1, len(beats))
     min_beat = max(2.6, 22.0 / nb)
@@ -151,27 +104,62 @@ def build_audio(script: dict, base_dir: Path, ffmpeg: str) -> dict:
     tmp.mkdir(parents=True, exist_ok=True)
     assets = ensure_audio_assets(base_dir)
 
-    emit_progress(base_dir, vid_id, "Neural Voiceover (edge-tts)", 5,
-                  f"Voice: {voice} • Captions: faster-whisper word timestamps",
-                  f"Audio pipeline: edge-tts {voice} -> faster-whisper alignment -> EN .ASS")
+    engine_banner = (
+        "Qwen3-TTS (Local CUDA GPU)"
+        if (preferred_tts in ("qwen3", "auto") and lang in tts_engine.QWEN_LANG_MAP)
+        else "edge-tts (Hinglish Bilingual)"
+    )
+    emit_progress(base_dir, vid_id, f"Neural Voiceover ({engine_banner})", 5,
+                  f"Engine: {engine_banner} • Captions: faster-whisper word timestamps",
+                  f"Audio pipeline: {engine_banner} -> faster-whisper alignment -> EN .ASS")
 
     voice_chunks, sfx_marks, timed, total = [], [], [], 0
     whisper_used = boundary_used = 0
+
+    use_qwen_batch = (preferred_tts in ("qwen3", "auto") and lang in tts_engine.QWEN_LANG_MAP)
+    batch_results: list[tuple[bool, str]] = []
+    if use_qwen_batch:
+        emit_progress(base_dir, vid_id, "Qwen3-TTS GPU Batch Synthesis", 8,
+                      f"Synthesizing {nb} beats on RTX GPU via Qwen3-TTS 0.6B...",
+                      f"Batching {nb} beats on Qwen3-TTS 0.6B (bfloat16)...")
+        batch_items = [
+            (
+                re.sub(r"^[A-Za-z]+:\s*", "", b["spoken_text"]).strip(),
+                lang,
+                b.get("speaker_gender", "male"),
+                tmp / f"beat_{idx}.wav",
+            )
+            for idx, b in enumerate(beats, start=1)
+        ]
+        try:
+            batch_results = tts_engine.synthesize_batch_qwen3(batch_items, base_dir, target_sr=SAMPLE_RATE, batch_size=4)
+        except Exception as e:
+            emit_progress(base_dir, vid_id, "Qwen3-TTS Fallback", 12,
+                          f"Qwen3-TTS error ({type(e).__name__}); using fallback voices",
+                          f"Qwen3-TTS batch error: {e}")
+            batch_results = []
+
     for i, beat in enumerate(beats, start=1):
         mp3, wav = tmp / f"beat_{i}.mp3", tmp / f"beat_{i}.wav"
-        vmap = VOICE_MAP_FEMALE if beat.get("speaker_gender") == "female" else VOICE_MAP
-        beat_voice = vmap.get(lang, VOICE_MAP["hi"])
+        gender = beat.get("speaker_gender", "male")
         clean_spoken = re.sub(r"^[A-Za-z]+:\s*", "", beat["spoken_text"]).strip()
         clean_en_sub = re.sub(r"^[A-Za-z]+:\s*", "", beat["en_subtitle"]).strip()
-        bounds = []
-        try:
-            bounds = asyncio.run(_edge_tts(clean_spoken, beat_voice, mp3))
-            subprocess.run([ffmpeg, "-y", "-i", str(mp3), "-ac", "1", "-ar", str(SAMPLE_RATE), str(wav)],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-        except Exception as e:
-            emit_progress(base_dir, vid_id, "Neural Voiceover (edge-tts)", 5 + i * 3,
-                          "edge-tts unreachable — offline voice fallback", f"edge-tts failed on beat {i}: {type(e).__name__}")
-            _offline_voice(clean_spoken, wav, min_beat)
+
+        if batch_results and i - 1 < len(batch_results) and batch_results[i - 1][0]:
+            beat_voice, bounds = batch_results[i - 1][1], []
+        else:
+            beat_voice, bounds = tts_engine.synthesize_beat(
+                text=clean_spoken,
+                lang_code=lang,
+                gender=gender,
+                out_wav=wav,
+                tmp_mp3=mp3,
+                base_dir=base_dir,
+                ffmpeg_bin=ffmpeg,
+                target_sr=SAMPLE_RATE,
+                preferred_engine="edge",
+                fallback_dur=min_beat,
+            )
 
         samples = _read_wav(wav)
         nz = np.where(np.abs(samples) > 0.012)[0]
@@ -213,9 +201,9 @@ def build_audio(script: dict, base_dir: Path, ffmpeg: str) -> dict:
             "en_words": captions.map_words_to_speech(en_words, intervals, t0, t1, same_lang=(lang == "en")),
         })
         timed.append(b)
-        emit_progress(base_dir, vid_id, "Neural Voiceover + Word Timing", 5 + int(i / nb * 25),
-                      f"Beat {i}/{nb}: {len(intervals)} speech words aligned",
-                      f"Beat {i}/{nb} voiced ({t1 - t0:.2f}s) • timing via {src} ({len(intervals)} words)")
+        emit_progress(base_dir, vid_id, f"Voiceover ({beat_voice})", 5 + int(i / nb * 25),
+                      f"Beat {i}/{nb}: {beat_voice} • {len(intervals)} words synced ({src})",
+                      f"Beat {i}/{nb} voiced via {beat_voice} ({t1 - t0:.2f}s) • {src} ({len(intervals)} words)")
 
     voice = np.concatenate(voice_chunks)
     sfx = np.zeros_like(voice)

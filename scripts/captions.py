@@ -37,13 +37,37 @@ def get_whisper(base_dir: Path):
     return _WHISPER
 
 
+def _load_wav_16k(wav_path: Path) -> np.ndarray:
+    """Decode WAV via stdlib wave + numpy and resample to 16 kHz mono float32 (bypasses PyAV 19 metadata_errors)."""
+    import wave
+
+    with wave.open(str(wav_path), "rb") as wf:
+        sr = wf.getframerate()
+        ch = wf.getnchannels()
+        sw = wf.getsampwidth()
+        raw = wf.readframes(wf.getnframes())
+    if sw == 2:
+        arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    elif sw == 4:
+        arr = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
+    else:
+        arr = np.frombuffer(raw, dtype=np.uint8).astype(np.float32) / 128.0 - 1.0
+    if ch > 1:
+        arr = arr.reshape(-1, ch).mean(axis=1)
+    if sr != 16000 and len(arr) > 0:
+        n_out = max(1, int(round(len(arr) * 16000 / sr)))
+        arr = np.interp(np.linspace(0.0, len(arr) - 1, n_out), np.arange(len(arr)), arr).astype(np.float32)
+    return np.ascontiguousarray(arr, dtype=np.float32)
+
+
 def whisper_word_intervals(base_dir: Path, wav_path: Path, lang: str) -> list[tuple[float, float, str]]:
     model = get_whisper(base_dir)
     if model is None:
         return []
     try:
+        audio_input = _load_wav_16k(wav_path) if wav_path.suffix.lower() == ".wav" else str(wav_path)
         segments, _ = model.transcribe(
-            str(wav_path), language=lang, word_timestamps=True, beam_size=1, vad_filter=False
+            audio_input, language=lang, word_timestamps=True, beam_size=1, vad_filter=False
         )
         out = []
         for seg in segments:

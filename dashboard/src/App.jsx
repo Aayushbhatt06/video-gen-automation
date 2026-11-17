@@ -36,6 +36,7 @@ export default function App() {
   const [newTopic, setNewTopic] = useState('');
   const [newStyle, setNewStyle] = useState('auto');
   const [selectedLangs, setSelectedLangs] = useState(['hi', 'en']);
+  const [ttsEngine, setTtsEngine] = useState('qwen3');
 
   // Selected Script Language Override & Clone
   const [renderLang, setRenderLang] = useState('hi');
@@ -101,6 +102,7 @@ export default function App() {
         topic: newTopic.trim(),
         style: newStyle,
         languages: selectedLangs,
+        tts_engine: ttsEngine,
         render_immediately: renderNow,
       }),
     });
@@ -141,7 +143,10 @@ export default function App() {
     const res = await fetch(`${API_BASE}/api/render/${id}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(langOverride ? { spoken_language: langOverride } : {}),
+      body: JSON.stringify({
+        ...(langOverride ? { spoken_language: langOverride } : {}),
+        tts_engine: ttsEngine,
+      }),
     });
     const data = await res.json();
     setState(data);
@@ -468,7 +473,27 @@ export default function App() {
               </div>
 
               <div className="form-section">
-                <label>3. 2D Cartoon Animation Style</label>
+                <label>3. Voice Engine (Alibaba Qwen3-TTS Local GPU)</label>
+                <div className="style-grid">
+                  <div
+                    className={`style-card ${ttsEngine === 'qwen3' ? 'active' : ''}`}
+                    onClick={() => setTtsEngine('qwen3')}
+                  >
+                    <strong>🧠 Qwen3-TTS 0.6B (Local GPU — Default)</strong>
+                    <span>Natural voice for English/Global languages + automatic Hinglish bilingual support</span>
+                  </div>
+                  <div
+                    className={`style-card ${ttsEngine === 'edge' ? 'active' : ''}`}
+                    onClick={() => setTtsEngine('edge')}
+                  >
+                    <strong>☁️ Edge-TTS Neural</strong>
+                    <span>Lightweight Microsoft Edge neural voices (zero GPU memory)</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="form-section">
+                <label>4. 2D Cartoon Animation Style</label>
                 <div className="style-grid">
                   {STYLES.map((s) => (
                     <div
@@ -534,7 +559,15 @@ export default function App() {
 
                 {/* Per-Video Language & Render Control */}
                 <div className="control-box">
-                  <label>🎙️ Render Voiceover Language (Subtitles: English Only)</label>
+                  <label>🎙️ Voice Engine & Language (Subtitles: English Only)</label>
+                  <select
+                    value={ttsEngine}
+                    onChange={(e) => setTtsEngine(e.target.value)}
+                    style={{ marginBottom: '8px' }}
+                  >
+                    <option value="qwen3">🧠 Qwen3-TTS 0.6B (Local GPU) + Hinglish Auto</option>
+                    <option value="edge">☁️ Edge-TTS Neural Voices</option>
+                  </select>
                   <div className="render-lang-row">
                     <select value={renderLang} onChange={(e) => setRenderLang(e.target.value)}>
                       {LANGUAGES.map((l) => (
