@@ -3,51 +3,58 @@ import React, { useEffect, useState } from 'react';
 const API_BASE = 'http://127.0.0.1:8765';
 
 const STYLES = [
-  { id: 'tall_tale_3d', name: 'Tall Tale 3D', desc: '2D cartoon characters inside a 3D parallax stage (Weird History & Loopholes)' },
-  { id: 'deep_dive_3d', name: 'Deep Dive 3D', desc: 'Zack D. style X-ray anatomy & neon scanner HUD (Body/Science Explainers)' },
-  { id: 'inside_out', name: 'Inside Out', desc: 'Clean 2D split cutaway diagrams (Fast Science & Mechanics)' },
-  { id: 'stick_story', name: 'Stick Story', desc: 'Expressive stick figures on blueprint grid (Survival Hacks & Hypotheticals)' },
-  { id: 'night_file_3d', name: 'Night File 3D', desc: 'Noir spotlight & red conspiracy strings (Unsolved Mysteries)' },
-  { id: 'paper_atlas', name: 'Paper Atlas', desc: 'Vintage parchment map & animated travel routes (Battles & Empires)' },
+  { id: 'auto', name: 'Auto-Match Reference Style', desc: 'Automatically picks the best animation style for your topic' },
+  { id: 'tall_tale_3d', name: '2.5D Sitcom / Office Room', desc: 'Rohan, Meera & Biscuit / Weird laws & loopholes' },
+  { id: 'stick_story', name: 'Doodle Cartoon World', desc: 'Bright outdoor houses, mountains & science gags' },
+  { id: 'deep_dive_3d', name: 'Technical Blueprint HUD', desc: 'Dark engineering/body grid + live telemetry & stepper' },
+  { id: 'night_file_3d', name: 'Mythic Silhouette', desc: 'Atmospheric golden/indigo skies, embers & royal silhouettes' },
+  { id: 'inside_out', name: 'Flat-Vector Cutaway', desc: 'Side-profile road/vehicle comparisons & callout boxes' },
 ];
 
 const LANGUAGES = [
-  { code: 'hi', label: 'Hindi (hi-IN) — Default' },
-  { code: 'es', label: 'Spanish (es-MX)' },
-  { code: 'fr', label: 'French (fr-FR)' },
-  { code: 'ja', label: 'Japanese (ja-JP)' },
-  { code: 'pt', label: 'Portuguese (pt-BR)' },
-  { code: 'de', label: 'German (de-DE)' },
-  { code: 'en', label: 'English (en-US)' },
+  { code: 'hi', flag: '🇮🇳', name: 'Hinglish', label: 'Hinglish (hi-IN Casual)' },
+  { code: 'en', flag: '🇺🇸', name: 'English', label: 'English (en-US Andrew)' },
+  { code: 'es', flag: '🇪🇸', name: 'Spanish', label: 'Spanish (es-MX)' },
+  { code: 'fr', flag: '🇫🇷', name: 'French', label: 'French (fr-FR)' },
+  { code: 'ja', flag: '🇯🇵', name: 'Japanese', label: 'Japanese (ja-JP)' },
+  { code: 'pt', flag: '🇧🇷', name: 'Portuguese', label: 'Portuguese (pt-BR)' },
+  { code: 'de', flag: '🇩🇪', name: 'German', label: 'German (de-DE)' },
 ];
+
+const REACTION_FX = ['none', 'sweat_drops', 'villain_red_eyes', 'storm_cloud', 'hearts', 'frost'];
+const SFX_OPTIONS = ['vine_boom', 'pop', 'whoosh', 'ding', 'record_scratch'];
 
 export default function App() {
   const [state, setState] = useState(null);
   const [backendOnline, setBackendOnline] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
-  const [activeTab, setActiveTab] = useState('inspector');
-  const [showLogs, setShowLogs] = useState(true);
+  const [viewMode, setViewMode] = useState('studio'); // 'studio' | 'create'
+  const [filterTab, setFilterTab] = useState('all'); // 'all' | 'draft' | 'rendered' | 'scheduled'
+  const [showConsole, setShowConsole] = useState(false);
 
-  // Live Story Editing State
+  // New Script Generator Controls
+  const [newTopic, setNewTopic] = useState('');
+  const [newStyle, setNewStyle] = useState('auto');
+  const [selectedLangs, setSelectedLangs] = useState(['hi', 'en']);
+
+  // Selected Script Language Override & Clone
+  const [renderLang, setRenderLang] = useState('hi');
+
+  // Beat-by-Beat Script Editor
   const [editMode, setEditMode] = useState(false);
   const [editTitle, setEditTitle] = useState('');
   const [editStyle, setEditStyle] = useState('tall_tale_3d');
   const [editLang, setEditLang] = useState('hi');
   const [editBeats, setEditBeats] = useState([]);
 
-  // Custom Director Form (Default Hindi + English Subtitles)
-  const [customStyle, setCustomStyle] = useState('tall_tale_3d');
-  const [customLang, setCustomLang] = useState('hi');
-  const [customTitle, setCustomTitle] = useState('');
-
   const fetchState = async () => {
     try {
       const res = await fetch(`${API_BASE}/api/state`);
-      if (!res.ok) throw new Error('Backend HTTP error');
+      if (!res.ok) throw new Error('HTTP error');
       const data = await res.json();
       setState(data);
       setBackendOnline(true);
-    } catch (err) {
+    } catch {
       setBackendOnline(false);
     }
   };
@@ -59,35 +66,126 @@ export default function App() {
   }, []);
 
   const videos = state?.videos || [];
-  const currentVideo = videos.find((v) => v.id === selectedId) || videos[0] || null;
-  const progress = state?.progress || {
-    running: false,
-    stage: 'Idle',
-    percent: 0,
-    detail: 'Waiting for command...',
-    logs: [],
-  };
+  const filteredVideos = videos.filter((v) => {
+    if (filterTab === 'draft') return v.status === 'story_draft' || v.status === 'reel_rejected';
+    if (filterTab === 'rendered') return Boolean(v.video_url);
+    if (filterTab === 'scheduled') return v.status === 'scheduled_9pm';
+    return true;
+  });
+
+  const currentVideo = videos.find((v) => v.id === selectedId) || filteredVideos[0] || videos[0] || null;
+  const progress = state?.progress || { running: false, stage: 'Idle', percent: 0, detail: '', logs: [] };
   const isRendering = Boolean(progress.running);
-  const schedule = state?.schedule || {
-    generate_time: '18:00',
-    upload_time: '21:00',
-    timezone: 'Asia/Kolkata',
-    default_language: 'hi',
-    enabled: true,
+  const schedule = state?.schedule || { generate_time: '18:00', upload_time: '21:00', enabled: true };
+
+  useEffect(() => {
+    if (currentVideo) {
+      setRenderLang(currentVideo.spoken_language || 'hi');
+    }
+  }, [currentVideo?.id]);
+
+  const toggleLanguageChoice = (code) => {
+    setSelectedLangs((prev) => {
+      if (prev.includes(code)) {
+        return prev.length === 1 ? prev : prev.filter((c) => c !== code);
+      }
+      return [...prev, code];
+    });
   };
 
-  const startEditingStory = (vid) => {
+  const handleCreateScripts = async (renderNow) => {
+    const res = await fetch(`${API_BASE}/api/script/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        topic: newTopic.trim(),
+        style: newStyle,
+        languages: selectedLangs,
+        render_immediately: renderNow,
+      }),
+    });
+    const data = await res.json();
+    setState(data);
+    if (data.videos?.[0]) {
+      setSelectedId(data.videos[0].id);
+    }
+    setNewTopic('');
+    setViewMode('studio');
+    setEditMode(false);
+  };
+
+  const handleDeleteScript = async (id, e) => {
+    if (e) e.stopPropagation();
+    const res = await fetch(`${API_BASE}/api/script/delete/${id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ draft_replacement: false }),
+    });
+    const data = await res.json();
+    setState(data);
+    if (selectedId === id) {
+      setSelectedId(data.videos?.[0]?.id || null);
+      setEditMode(false);
+    }
+  };
+
+  const handleClearAll = async () => {
+    const res = await fetch(`${API_BASE}/api/queue/clear`, { method: 'POST' });
+    const data = await res.json();
+    setState(data);
+    setSelectedId(null);
+    setEditMode(false);
+  };
+
+  const handleRenderVideo = async (id, langOverride) => {
+    const res = await fetch(`${API_BASE}/api/render/${id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(langOverride ? { spoken_language: langOverride } : {}),
+    });
+    const data = await res.json();
+    setState(data);
+  };
+
+  const handleCloneIntoLanguage = async (id, targetLang, renderNow = false) => {
+    const res = await fetch(`${API_BASE}/api/script/clone/${id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ spoken_language: targetLang, render_immediately: renderNow }),
+    });
+    const data = await res.json();
+    setState(data);
+    if (data.videos?.[0]) setSelectedId(data.videos[0].id);
+  };
+
+  const handleDeleteReelOnly = async (id) => {
+    const res = await fetch(`${API_BASE}/api/reel/delete/${id}`, { method: 'POST' });
+    const data = await res.json();
+    setState(data);
+  };
+
+  const handleApproveReel = async (id) => {
+    const res = await fetch(`${API_BASE}/api/review/${id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'scheduled_9pm' }),
+    });
+    const data = await res.json();
+    setState(data);
+  };
+
+  const startEditing = (vid) => {
     if (!vid?.script) return;
     setEditTitle(vid.script.title || '');
     setEditStyle(vid.script.style || 'tall_tale_3d');
     setEditLang(vid.script.spoken_language || 'hi');
-    setEditBeats(vid.script.beats.map((b) => ({ ...b })));
+    setEditBeats((vid.script.beats || []).map((b) => ({ ...b })));
     setEditMode(true);
   };
 
-  const handleSaveStoryEdits = async () => {
+  const handleSaveEdits = async () => {
     if (!currentVideo) return;
-    const res = await fetch(`${API_BASE}/api/story/update/${currentVideo.id}`, {
+    const res = await fetch(`${API_BASE}/api/script/update/${currentVideo.id}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -102,223 +200,321 @@ export default function App() {
     setEditMode(false);
   };
 
-  const handleDraftStoryOnly = async (payload = {}) => {
-    const res = await fetch(`${API_BASE}/api/story/draft`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        spoken_language: customLang || 'hi',
-        style: customStyle,
-        ...payload,
-      }),
-    });
-    const data = await res.json();
-    setState(data);
-    if (data.videos?.[0]) setSelectedId(data.videos[0].id);
-    setActiveTab('inspector');
+  const handleAddBeat = () => {
+    const nextNum = editBeats.length + 1;
+    setEditBeats([
+      ...editBeats,
+      {
+        beat_id: nextNum,
+        speaker: nextNum % 2 === 0 ? 'meera' : 'rohan',
+        speaker_gender: nextNum % 2 === 0 ? 'female' : 'male',
+        spoken_text: 'Rohan: भाई ये नया सीन तो और भी crazy है!',
+        en_subtitle: 'Bro, wait till you see this next crazy part!',
+        reaction_fx: 'none',
+        sfx_cue: 'pop',
+        character_expression: 'shocked',
+      },
+    ]);
   };
 
-  const handleGenerateAndRender = async (payload = {}) => {
-    const res = await fetch(`${API_BASE}/api/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        spoken_language: 'hi',
-        ...payload,
-      }),
-    });
-    const data = await res.json();
-    setState(data);
-    if (data.videos?.[0]) setSelectedId(data.videos[0].id);
-    setActiveTab('inspector');
+  const handleRemoveBeat = (idx) => {
+    if (editBeats.length <= 4) return;
+    const updated = editBeats.filter((_, i) => i !== idx).map((b, i) => ({ ...b, beat_id: i + 1 }));
+    setEditBeats(updated);
   };
 
-  const handleRenderStory = async (id) => {
-    const res = await fetch(`${API_BASE}/api/render/${id}`, { method: 'POST' });
-    const data = await res.json();
-    setState(data);
-  };
-
-  const handleRejectStory = async (id, draftReplacement = true) => {
-    const res = await fetch(`${API_BASE}/api/story/reject/${id}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        draft_replacement: draftReplacement,
-        spoken_language: schedule.default_language || 'hi',
-      }),
-    });
-    const data = await res.json();
-    setState(data);
-    if (data.videos?.[0]) setSelectedId(data.videos[0].id);
-    setEditMode(false);
-  };
-
-  const handleRejectReelOnly = async (id) => {
-    const res = await fetch(`${API_BASE}/api/reel/reject/${id}`, { method: 'POST' });
-    const data = await res.json();
-    setState(data);
-  };
-
-  const handleStatusChange = async (id, newStatus) => {
-    const res = await fetch(`${API_BASE}/api/review/${id}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: newStatus }),
-    });
-    const data = await res.json();
-    setState(data);
-  };
-
-  const handleCancelRender = async () => {
+  const handleCancelJob = async () => {
     const res = await fetch(`${API_BASE}/api/job/cancel`, { method: 'POST' });
-    const data = await res.json();
-    setState(data);
+    setState(await res.json());
   };
 
-  const handleClearLogs = async () => {
-    const res = await fetch(`${API_BASE}/api/logs/clear`, { method: 'POST' });
-    const data = await res.json();
-    setState(data);
-  };
-
-  const handleToggleAutomation = async () => {
+  const handleScheduleToggle = async () => {
     const res = await fetch(`${API_BASE}/api/schedule`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled: !schedule.enabled }),
     });
-    const data = await res.json();
-    setState(data);
+    setState(await res.json());
   };
 
+  const langObj = (code) => LANGUAGES.find((l) => l.code === code) || LANGUAGES[0];
+
   return (
-    <div className="studio-shell">
-      {/* Top Header */}
-      <header className="studio-header">
-        <div className="brand-block">
-          <div className="badge-row">
-            <span className="brand-badge">ANTIGRAVITY INTERACTIVE STUDIO</span>
-            <span className={`conn-pill ${backendOnline ? 'online' : 'offline'}`}>
-              {backendOnline ? '● Backend Connected (Port 8765)' : '○ Backend Offline — Run start_studio.bat'}
-            </span>
+    <div className="app-shell">
+      {/* Top Studio Bar */}
+      <header className="topbar">
+        <div className="topbar-left">
+          <div className="logo-badge">2D SHORTS STUDIO</div>
+          <div>
+            <h1>Autonomous Shorts & Reels Control Center</h1>
+            <div className="conn-row">
+              <span className={`conn-dot ${backendOnline ? 'on' : 'off'}`} />
+              <span>{backendOnline ? 'Backend Connected (:8765)' : 'Backend Offline — Run start_studio.bat'}</span>
+              <span className="sep">•</span>
+              <span>Subtitles: Strictly English Only (.ASS)</span>
+            </div>
           </div>
-          <h1>Faceless Animated Shorts & Reels Control Center</h1>
-          <p>
-            Default Voiceover: <strong>Hindi (hi-IN)</strong> • Subtitles: <strong>English Only</strong> • Duration:{' '}
-            <strong>22s–28s (8 Beats)</strong>
-          </p>
         </div>
 
-        <div className="schedule-banner">
-          <div className="schedule-step">
-            <span className="step-time">{schedule.generate_time} IST</span>
-            <span className="step-label">Daily 24s Hindi+EN Render</span>
-          </div>
-          <span className="step-arrow">➔</span>
-          <div className="schedule-step">
-            <span className="step-time">Auto QA Gate</span>
-            <span className="step-label">20-28s + Audio + EN Subs</span>
-          </div>
-          <span className="step-arrow">➔</span>
-          <div className="schedule-step">
-            <span className="step-time">{schedule.upload_time} IST</span>
-            <span className="step-label">YouTube Upload + IG Copy</span>
-          </div>
-          <button
-            className={`pill-toggle ${schedule.enabled ? 'active' : 'paused'}`}
-            onClick={handleToggleAutomation}
-          >
-            {schedule.enabled ? '● Daily 6PM Cron ON' : '○ Cron Paused'}
+        <div className="topbar-center">
+          <span className="cron-info">
+            Daily Auto: <strong>{schedule.generate_time}</strong> Draft & Render ➔ <strong>{schedule.upload_time}</strong> YT
+          </span>
+          <button className={`cron-btn ${schedule.enabled ? 'active' : 'off'}`} onClick={handleScheduleToggle}>
+            {schedule.enabled ? '● Cron ON' : '○ Cron OFF'}
           </button>
         </div>
 
-        <div className="header-actions">
+        <div className="topbar-actions">
           <button
-            className="secondary-cta"
-            disabled={!backendOnline || isRendering}
-            onClick={() => handleDraftStoryOnly({ spoken_language: 'hi' })}
+            className={`btn-nav ${viewMode === 'create' ? 'active' : ''}`}
+            disabled={!backendOnline}
+            onClick={() => setViewMode(viewMode === 'create' ? 'studio' : 'create')}
           >
-            📝 Draft New Hindi Story First
+            {viewMode === 'create' ? '← Back to Studio' : '✨ + Generate New Script'}
           </button>
-          <button
-            className="primary-cta"
-            disabled={!backendOnline || isRendering}
-            onClick={() => handleGenerateAndRender({ spoken_language: 'hi' })}
-          >
-            {isRendering ? `⏳ Rendering (${progress.percent}%)...` : '⚡ Generate & Render 24s Reel Now'}
+          <button className="btn-ghost" onClick={() => setShowConsole(!showConsole)}>
+            🖥️ {showConsole ? 'Hide Logs' : 'Console Logs'}
           </button>
         </div>
       </header>
 
-      {/* Live Backend Activity & Real-Time Render Progress Panel */}
-      <section className={`live-backend-bar ${isRendering ? 'active-render' : ''}`}>
-        <div className="progress-top-row">
-          <div className="stage-info">
-            <span className={`pulse-dot ${isRendering ? 'running' : 'idle'}`} />
-            <strong>Backend Engine:</strong>
-            <span className="stage-badge">{progress.stage}</span>
-            <span className="stage-detail">{progress.detail}</span>
-          </div>
-          <div className="progress-actions">
-            <span className="pct-readout">{progress.percent}%</span>
-            {isRendering && (
-              <button className="btn-cancel-job" onClick={handleCancelRender}>
-                ⏹️ Cancel Render
-              </button>
-            )}
-            <button className="btn-log-toggle" onClick={() => setShowLogs(!showLogs)}>
-              {showLogs ? '▼ Hide Backend Console' : '▲ Show Backend Console'}
-            </button>
-          </div>
-        </div>
-
-        <div className="progress-track">
-          <div className="progress-fill" style={{ width: `${progress.percent}%` }} />
-        </div>
-
-        {showLogs && (
-          <div className="console-drawer">
-            <div className="console-header">
-              <span>🖥️ LIVE BACKEND TERMINAL STREAM (scripts/server.py & pipeline.py)</span>
-              <button onClick={handleClearLogs}>🧹 Clear Logs</button>
+      {/* Live Progress Bar (Always visible when rendering or logs toggled) */}
+      {(isRendering || showConsole) && (
+        <section className={`progress-panel ${isRendering ? 'rendering' : ''}`}>
+          <div className="prog-row">
+            <div className="prog-status">
+              <span className={`pulse ${isRendering ? 'live' : ''}`} />
+              <strong>{progress.stage}</strong>
+              <span className="prog-detail">{progress.detail}</span>
             </div>
-            <div className="console-body">
-              {(progress.logs || []).map((line, i) => (
-                <div key={i} className="console-line">
-                  {line}
-                </div>
+            <div className="prog-right">
+              <span className="prog-pct">{progress.percent}%</span>
+              {isRendering && (
+                <button className="btn-danger-sm" onClick={handleCancelJob}>
+                  ⏹️ Cancel Render
+                </button>
+              )}
+              <button
+                className="btn-ghost-sm"
+                onClick={async () => setState(await (await fetch(`${API_BASE}/api/logs/clear`, { method: 'POST' })).json())}
+              >
+                Clear Logs
+              </button>
+            </div>
+          </div>
+          {isRendering && (
+            <div className="prog-track">
+              <div className="prog-fill" style={{ width: `${progress.percent}%` }} />
+            </div>
+          )}
+          {showConsole && (
+            <div className="console-box">
+              {(progress.logs || []).map((ln, i) => (
+                <div key={i}>{ln}</div>
               ))}
             </div>
+          )}
+        </section>
+      )}
+
+      {/* Main Split Layout: Library Sidebar + Active Workspace */}
+      <div className="workspace">
+        {/* Left Sidebar: Scripts & Reels Library */}
+        <aside className="sidebar">
+          <div className="sidebar-head">
+            <h2>Scripts & Reels ({videos.length})</h2>
+            {videos.length > 0 && (
+              <button className="btn-danger-xs" disabled={isRendering} onClick={handleClearAll}>
+                Clear All
+              </button>
+            )}
           </div>
-        )}
-      </section>
 
-      {/* Main 2-Column Studio Grid */}
-      <main className="studio-grid">
-        {/* Left Column: 9:16 Vertical Video Preview & Interactive Reel Controls */}
-        <section className="preview-column">
-          <div className="panel-card">
-            <div className="card-header">
-              <h2>📱 9:16 Vertical Reel Player</h2>
-              {currentVideo && (
-                <span className={`status-badge ${currentVideo.status}`}>
-                  {currentVideo.status === 'scheduled_9pm'
-                    ? '✅ QA Passed • Scheduled 9:00 PM'
-                    : currentVideo.status === 'rendering'
-                    ? `⏳ Rendering (${progress.percent}%)`
-                    : currentVideo.status === 'story_draft'
-                    ? '📝 Story Draft (Not Rendered Yet)'
-                    : currentVideo.status === 'reel_rejected'
-                    ? '🚫 Reel Rejected (MP4 Deleted)'
-                    : currentVideo.status}
-                </span>
-              )}
-            </div>
+          <div className="filter-tabs">
+            {[
+              ['all', 'All'],
+              ['draft', 'Drafts'],
+              ['rendered', 'Videos'],
+              ['scheduled', '9PM'],
+            ].map(([k, lbl]) => (
+              <button
+                key={k}
+                className={filterTab === k ? 'active' : ''}
+                onClick={() => setFilterTab(k)}
+              >
+                {lbl}
+              </button>
+            ))}
+          </div>
 
-            {currentVideo ? (
-              <>
-                <div className="phone-frame">
+          <div className="library-list">
+            {filteredVideos.length === 0 ? (
+              <div className="empty-lib">
+                <p>No scripts here yet.</p>
+                <button className="btn-primary-sm" onClick={() => setViewMode('create')}>
+                  ✨ + Generate New Script
+                </button>
+              </div>
+            ) : (
+              filteredVideos.map((v) => {
+                const l = langObj(v.spoken_language);
+                return (
+                  <div
+                    key={v.id}
+                    className={`lib-card ${currentVideo?.id === v.id && viewMode === 'studio' ? 'selected' : ''}`}
+                    onClick={() => {
+                      setSelectedId(v.id);
+                      setViewMode('studio');
+                      setEditMode(false);
+                    }}
+                  >
+                    <div className="lib-card-top">
+                      <span className="lang-chip">
+                        {l.flag} {l.name}
+                      </span>
+                      <span className={`state-chip ${v.status}`}>
+                        {v.status === 'scheduled_9pm'
+                          ? '✅ 9PM'
+                          : v.status === 'rendering'
+                          ? '⏳ Rendering'
+                          : '📝 Draft'}
+                      </span>
+                      <button
+                        className="lib-del-btn"
+                        title="Delete this script & video"
+                        disabled={isRendering && v.status === 'rendering'}
+                        onClick={(e) => handleDeleteScript(v.id, e)}
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                    <div className="lib-title">{v.title}</div>
+                    <div className="lib-meta">
+                      <span>{v.style.replace(/_/g, ' ')}</span>
+                      <span>•</span>
+                      <span>{v.duration}s</span>
+                      <span>•</span>
+                      <span>{v.video_url ? '🎬 MP4 Ready' : 'No Video'}</span>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </aside>
+
+        {/* Right Main Area */}
+        <main className="main-area">
+          {viewMode === 'create' ? (
+            /* ================= NEW SCRIPT GENERATOR PANEL ================= */
+            <section className="card create-panel">
+              <div className="panel-title-row">
+                <div>
+                  <h2>✨ Generate New 2D Animated Script</h2>
+                  <p>
+                    Choose your topic, pick one or multiple voiceover languages, and select the 2D animation style.
+                    Subtitles are always burned in <strong>English Only</strong>.
+                  </p>
+                </div>
+              </div>
+
+              <div className="form-section">
+                <label>1. Story Topic (Leave blank for a random unseen comedy skit)</label>
+                <div className="topic-row">
+                  <input
+                    type="text"
+                    placeholder="e.g. Why Indians keep plastic bags inside a bigger plastic bag..."
+                    value={newTopic}
+                    onChange={(e) => setNewTopic(e.target.value)}
+                  />
+                  {newTopic && (
+                    <button className="btn-ghost" onClick={() => setNewTopic('')}>
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="form-section">
+                <div className="lang-header-row">
+                  <label>2. Voiceover Language(s) to Generate</label>
+                  <div className="preset-pills">
+                    <button onClick={() => setSelectedLangs(['hi'])}>Only Hinglish</button>
+                    <button onClick={() => setSelectedLangs(['en'])}>Only English</button>
+                    <button onClick={() => setSelectedLangs(['hi', 'en'])}>Both (Hinglish + English)</button>
+                  </div>
+                </div>
+                <div className="lang-grid">
+                  {LANGUAGES.map((l) => {
+                    const active = selectedLangs.includes(l.code);
+                    return (
+                      <button
+                        key={l.code}
+                        type="button"
+                        className={`lang-option ${active ? 'active' : ''}`}
+                        onClick={() => toggleLanguageChoice(l.code)}
+                      >
+                        <span className="l-flag">{l.flag}</span>
+                        <div>
+                          <div className="l-name">{l.name}</div>
+                          <div className="l-sub">{l.label}</div>
+                        </div>
+                        <span className="l-check">{active ? '✔' : '+'}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="form-section">
+                <label>3. 2D Cartoon Animation Style</label>
+                <div className="style-grid">
+                  {STYLES.map((s) => (
+                    <div
+                      key={s.id}
+                      className={`style-card ${newStyle === s.id ? 'active' : ''}`}
+                      onClick={() => setNewStyle(s.id)}
+                    >
+                      <strong>{s.name}</strong>
+                      <span>{s.desc}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="create-footer">
+                <button
+                  className="btn-secondary"
+                  disabled={!backendOnline || isRendering}
+                  onClick={() => handleCreateScripts(false)}
+                >
+                  📝 Generate {selectedLangs.length > 1 ? `${selectedLangs.length} Script Drafts` : 'Script Draft'} Only
+                </button>
+                <button
+                  className="btn-primary"
+                  disabled={!backendOnline || isRendering}
+                  onClick={() => handleCreateScripts(true)}
+                >
+                  🎬 Generate & Render {selectedLangs.length > 1 ? 'Both Videos' : 'Video'} Now
+                </button>
+              </div>
+            </section>
+          ) : !currentVideo ? (
+            /* ================= EMPTY STUDIO STATE ================= */
+            <section className="card empty-studio">
+              <h2>Welcome to Your 2D Animated Shorts Studio</h2>
+              <p>Create a new Hinglish, English, or dual-language script to get started.</p>
+              <button className="btn-primary" disabled={!backendOnline} onClick={() => setViewMode('create')}>
+                ✨ + Generate New Script
+              </button>
+            </section>
+          ) : (
+            /* ================= ACTIVE SCRIPT & VIDEO STUDIO ================= */
+            <div className="studio-split">
+              {/* Video Player & Render Controls */}
+              <section className="card player-col">
+                <div className="phone-box">
                   {currentVideo.video_url ? (
                     <video
                       key={currentVideo.video_url}
@@ -326,275 +522,254 @@ export default function App() {
                       controls
                       autoPlay
                       loop
-                      className="vertical-video"
                     />
                   ) : (
-                    <div className="unrendered-placeholder">
-                      <div className="placeholder-icon">{isRendering ? '⚙️' : '📝'}</div>
-                      <h3>
-                        {isRendering
-                          ? `Rendering Frame-by-Frame (${progress.percent}%)`
-                          : currentVideo.status === 'reel_rejected'
-                          ? 'Reel Video Rejected & Deleted'
-                          : 'Story Draft Ready for Review'}
-                      </h3>
-                      <p>
-                        Review or edit the 8 Hindi + English-subtitle beats on the right, or click below to render the
-                        24-second 9:16 video!
-                      </p>
-                      {!isRendering && (
-                        <button className="primary-cta" onClick={() => handleRenderStory(currentVideo.id)}>
-                          🎬 Render 24s Animated Reel Now
-                        </button>
-                      )}
+                    <div className="phone-placeholder">
+                      <div className="ph-emoji">{currentVideo.status === 'rendering' ? '⚙️' : '🎬'}</div>
+                      <h3>{currentVideo.status === 'rendering' ? `Rendering ${progress.percent}%` : 'Draft Ready'}</h3>
+                      <p>Review or edit the script on the right, pick the language below, and render your 9:16 MP4.</p>
                     </div>
                   )}
                 </div>
 
-                <div className="video-meta-strip">
-                  <div>
-                    <strong>🎙️ Voice:</strong> {currentVideo.spoken_language_label}
+                {/* Per-Video Language & Render Control */}
+                <div className="control-box">
+                  <label>🎙️ Render Voiceover Language (Subtitles: English Only)</label>
+                  <div className="render-lang-row">
+                    <select value={renderLang} onChange={(e) => setRenderLang(e.target.value)}>
+                      {LANGUAGES.map((l) => (
+                        <option key={l.code} value={l.code}>
+                          {l.flag} {l.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="btn-primary"
+                      disabled={isRendering || !backendOnline}
+                      onClick={() => handleRenderVideo(currentVideo.id, renderLang)}
+                    >
+                      {currentVideo.video_url ? '🔄 Re-Render' : '🎬 Render Video'}
+                    </button>
                   </div>
-                  <div>
-                    <strong>💬 Subs:</strong> <span className="highlight-yellow">English Only</span>
-                  </div>
-                  <div>
-                    <strong>⏱️ Duration:</strong> {currentVideo.duration}s
+
+                  {/* Quick Clone into Opposite Language */}
+                  <div className="clone-row">
+                    <span>Need another language version?</span>
+                    {currentVideo.spoken_language !== 'en' && (
+                      <button
+                        className="btn-ghost-sm"
+                        disabled={isRendering}
+                        onClick={() => handleCloneIntoLanguage(currentVideo.id, 'en', false)}
+                      >
+                        🇺🇸 Clone as English
+                      </button>
+                    )}
+                    {currentVideo.spoken_language !== 'hi' && (
+                      <button
+                        className="btn-ghost-sm"
+                        disabled={isRendering}
+                        onClick={() => handleCloneIntoLanguage(currentVideo.id, 'hi', false)}
+                      >
+                        🇮🇳 Clone as Hinglish
+                      </button>
+                    )}
                   </div>
                 </div>
 
-                {/* Interactive Reel & Story Action Buttons */}
-                <div className="control-group-label">🎛️ REEL & STORY ACTIONS</div>
-                <div className="review-actions">
+                {/* Approve / Delete Video / Delete Script */}
+                <div className="action-stack">
                   <button
                     className="btn-approve"
                     disabled={!currentVideo.video_url || isRendering}
-                    onClick={() => handleStatusChange(currentVideo.id, 'scheduled_9pm')}
+                    onClick={() => handleApproveReel(currentVideo.id)}
                   >
-                    ✅ Approve for 9PM Upload
+                    ✅ Approve & Schedule 9:00 PM YouTube
                   </button>
-                  <button
-                    className="btn-rerender"
-                    disabled={isRendering}
-                    onClick={() => handleRenderStory(currentVideo.id)}
-                  >
-                    {currentVideo.video_url ? '🔄 Re-Render Reel' : '🎬 Render Reel'}
-                  </button>
+                  <div className="two-btns">
+                    <button
+                      className="btn-warn"
+                      disabled={!currentVideo.video_url || isRendering}
+                      onClick={() => handleDeleteReelOnly(currentVideo.id)}
+                    >
+                      🗑️ Delete Video Only
+                    </button>
+                    <button
+                      className="btn-danger"
+                      disabled={isRendering}
+                      onClick={() => handleDeleteScript(currentVideo.id)}
+                    >
+                      ❌ Delete Script
+                    </button>
+                  </div>
                 </div>
 
-                <div className="review-actions">
-                  <button
-                    className="btn-reject"
-                    disabled={!currentVideo.video_url || isRendering}
-                    onClick={() => handleRejectReelOnly(currentVideo.id)}
-                    title="Deletes the rendered MP4 video but keeps the story script so you can edit or re-render it"
-                  >
-                    🚫 Reject Reel Only (Discard MP4)
-                  </button>
-                  <button
-                    className="btn-reject-story"
-                    disabled={isRendering}
-                    onClick={() => handleRejectStory(currentVideo.id, true)}
-                    title="Deletes this story completely and immediately drafts a brand-new Hindi story"
-                  >
-                    🗑️ Reject Story & Draft Next
-                  </button>
-                </div>
-
-                {/* Automated QA Gate Scorecard */}
+                {/* QA Gate Summary */}
                 {currentVideo.qa_report && (
-                  <div className="qa-scorecard">
-                    <h3>🛡️ Automated QA Review Gate (20s–58s Policy)</h3>
-                    <div className="qa-grid">
-                      {Object.entries(currentVideo.qa_report.checks || {}).map(([key, val]) => (
-                        <div key={key} className={`qa-item ${val.passed ? 'pass' : 'fail'}`}>
-                          <span className="qa-icon">{val.passed ? '✔' : '✖'}</span>
-                          <div>
-                            <div className="qa-name">{key.replace(/_/g, ' ').toUpperCase()}</div>
-                            <div className="qa-detail">
-                              {val.resolution ||
-                                (val.duration_sec && `${val.duration_sec}s (${val.target_range})`) ||
-                                (val.rms_db && `Loudness: ${val.rms_db} dB`) ||
-                                (val.latin_character_ratio && `EN Ratio: ${val.latin_character_ratio * 100}%`) ||
-                                (val.hook_score && `Hook Score: ${val.hook_score}/10`)}
-                            </div>
-                          </div>
+                  <div className="qa-box">
+                    <h4>🛡️ Automated QA Report</h4>
+                    <div className="qa-pills">
+                      {Object.entries(currentVideo.qa_report.checks || {}).map(([k, val]) => (
+                        <div key={k} className={`qa-pill ${val.passed ? 'ok' : 'bad'}`}>
+                          <span>{val.passed ? '✔' : '✖'}</span>
+                          <span>{k.replace(/_/g, ' ')}</span>
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
-              </>
-            ) : (
-              <div className="empty-state">
-                <h3>Queue is Clean & Empty</h3>
-                <p>
-                  Click <strong>"📝 Draft New Hindi Story First"</strong> to inspect/edit a 24-second script before
-                  rendering, or <strong>"⚡ Generate & Render 24s Reel Now"</strong>!
-                </p>
-                <div className="empty-cta-row">
-                  <button
-                    className="secondary-cta"
-                    disabled={!backendOnline || isRendering}
-                    onClick={() => handleDraftStoryOnly({ spoken_language: 'hi' })}
-                  >
-                    📝 Draft 24s Hindi Story
-                  </button>
-                  <button
-                    className="primary-cta"
-                    disabled={!backendOnline || isRendering}
-                    onClick={() => handleGenerateAndRender({ spoken_language: 'hi' })}
-                  >
-                    ⚡ Generate & Render 24s Reel
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </section>
+              </section>
 
-        {/* Right Column: Queue + Interactive Story Editor & Director */}
-        <section className="inspector-column">
-          {/* Queue Bar */}
-          <div className="panel-card queue-card">
-            <div className="card-header">
-              <h2>🎞️ Stories & Rendered Reels Queue ({videos.length})</h2>
-              <span className="sub-note">Default Audio: Hindi (hi-IN) • Subtitles: Strict English Only</span>
-            </div>
-            {videos.length > 0 ? (
-              <div className="queue-strip">
-                {videos.map((v) => (
-                  <div
-                    key={v.id}
-                    className={`queue-pill ${currentVideo?.id === v.id ? 'selected' : ''}`}
-                    onClick={() => {
-                      setSelectedId(v.id);
-                      setEditMode(false);
-                    }}
-                  >
-                    <div className="q-top">
-                      <span className="q-style">{v.style.replace(/_/g, ' ').toUpperCase()}</span>
-                      <span className={`q-dot ${v.status}`}>{v.status.replace(/_/g, ' ')}</span>
-                    </div>
-                    <div className="q-title">{v.title}</div>
-                    <div className="q-lang">
-                      🔊 {v.spoken_language.toUpperCase()} → 💬 EN Subs ({v.duration}s)
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="queue-empty">No stories or reels in queue. Draft or generate one above!</div>
-            )}
-          </div>
-
-          {/* Tabs: Story Inspector/Editor vs Custom Director */}
-          <div className="panel-card">
-            <div className="tab-bar">
-              <button
-                className={activeTab === 'inspector' ? 'active' : ''}
-                onClick={() => setActiveTab('inspector')}
-              >
-                📝 Interactive Story Inspector & Beat Editor
-              </button>
-              <button
-                className={activeTab === 'director' ? 'active' : ''}
-                onClick={() => setActiveTab('director')}
-              >
-                🎬 Custom Story & Style Director
-              </button>
-            </div>
-
-            {activeTab === 'inspector' && currentVideo?.script ? (
-              <div className="script-inspector">
-                <div className="script-summary">
+              {/* Script, Cast & Shot-by-Shot Editor */}
+              <section className="card script-col">
+                <div className="script-top">
                   <div>
-                    <h3>{currentVideo.script.title}</h3>
-                    <p>
-                      {currentVideo.script.beats.length} Beats • Target Length: ~{currentVideo.duration}s (≥ 20–25s) •
-                      Voice: <strong>{currentVideo.spoken_language_label}</strong> • Subtitles:{' '}
-                      <strong>English Only</strong>
-                    </p>
+                    <div className="script-badges">
+                      <span className="lang-chip">
+                        {langObj(currentVideo.spoken_language).flag} {currentVideo.spoken_language_label}
+                      </span>
+                      <span className="sub-chip">💬 English-Only Subtitles</span>
+                      <span className="sub-chip">⏱️ {currentVideo.duration}s</span>
+                    </div>
+                    <h2>{currentVideo.script?.title}</h2>
                   </div>
-                  <div className="story-toolbar">
+
+                  <div className="script-btns">
                     {!editMode ? (
-                      <button className="btn-edit-story" onClick={() => startEditingStory(currentVideo)}>
-                        ✏️ Edit Story & Beats
+                      <button className="btn-secondary" onClick={() => startEditing(currentVideo)}>
+                        ✏️ Edit Script & Shots
                       </button>
                     ) : (
                       <>
-                        <button className="btn-save-story" onClick={handleSaveStoryEdits}>
-                          💾 Save Story Changes
+                        <button className="btn-approve" onClick={handleSaveEdits}>
+                          💾 Save Script
                         </button>
-                        <button className="btn-cancel-edit" onClick={() => setEditMode(false)}>
+                        <button className="btn-ghost" onClick={() => setEditMode(false)}>
                           Cancel
                         </button>
                       </>
                     )}
-                    <button
-                      className="btn-reject-story"
-                      disabled={isRendering}
-                      onClick={() => handleRejectStory(currentVideo.id, true)}
-                    >
-                      🚫 Reject Story & Draft Another
-                    </button>
                   </div>
                 </div>
 
+                {/* Cast & Set Design Sheet */}
+                {currentVideo.script?.production_bible && (
+                  <div className="cast-sheet">
+                    <div className="cast-title">
+                      🎭 Cast & Set: <strong>{currentVideo.script.production_bible.era_and_setting}</strong>
+                    </div>
+                    <div className="cast-chips">
+                      {(currentVideo.script.production_bible.cast || []).map((c) => (
+                        <span key={c.id} className="cast-chip">
+                          {c.gender === 'female' ? '👩' : '👨'} {c.name} · {c.costume.replace(/_/g, ' ')}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {editMode ? (
-                  <div className="live-editor-box">
-                    <div className="form-row">
+                  <div className="editor-area">
+                    <div className="editor-meta-grid">
                       <div>
-                        <label className="form-label">Story Title</label>
-                        <input
-                          type="text"
-                          value={editTitle}
-                          onChange={(e) => setEditTitle(e.target.value)}
-                        />
+                        <label>Title</label>
+                        <input type="text" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
                       </div>
                       <div>
-                        <label className="form-label">Voiceover Language (Subtitles stay English Only)</label>
+                        <label>Animation Style</label>
+                        <select value={editStyle} onChange={(e) => setEditStyle(e.target.value)}>
+                          {STYLES.filter((s) => s.id !== 'auto').map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label>Voiceover Language</label>
                         <select value={editLang} onChange={(e) => setEditLang(e.target.value)}>
                           {LANGUAGES.map((l) => (
                             <option key={l.code} value={l.code}>
-                              {l.label}
+                              {l.flag} {l.name}
                             </option>
                           ))}
                         </select>
                       </div>
                     </div>
 
-                    <div className="beats-list">
+                    <div className="shots-list">
                       {editBeats.map((b, idx) => (
-                        <div key={b.beat_id} className="beat-card editing">
-                          <div className="beat-header">
-                            <span className="beat-num">BEAT #{b.beat_id}</span>
-                            <span className="beat-cue">🎥 {b.camera_action}</span>
-                            <span className="beat-cue">😀 {b.character_expression}</span>
-                            <span className="beat-cue">🔊 {b.sfx_cue}</span>
+                        <div key={b.beat_id} className="shot-card editing">
+                          <div className="shot-head">
+                            <span className="shot-num">SHOT #{b.beat_id}</span>
+                            <select
+                              value={b.speaker_gender || 'male'}
+                              onChange={(e) => {
+                                const cp = [...editBeats];
+                                cp[idx] = { ...cp[idx], speaker_gender: e.target.value };
+                                setEditBeats(cp);
+                              }}
+                            >
+                              <option value="male">👨 Male Voice</option>
+                              <option value="female">👩 Female Voice</option>
+                            </select>
+                            <select
+                              value={b.reaction_fx || 'none'}
+                              onChange={(e) => {
+                                const cp = [...editBeats];
+                                cp[idx] = { ...cp[idx], reaction_fx: e.target.value };
+                                setEditBeats(cp);
+                              }}
+                            >
+                              {REACTION_FX.map((fx) => (
+                                <option key={fx} value={fx}>
+                                  FX: {fx}
+                                </option>
+                              ))}
+                            </select>
+                            <select
+                              value={b.sfx_cue || 'pop'}
+                              onChange={(e) => {
+                                const cp = [...editBeats];
+                                cp[idx] = { ...cp[idx], sfx_cue: e.target.value };
+                                setEditBeats(cp);
+                              }}
+                            >
+                              {SFX_OPTIONS.map((sx) => (
+                                <option key={sx} value={sx}>
+                                  SFX: {sx}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              className="btn-danger-xs"
+                              disabled={editBeats.length <= 4}
+                              onClick={() => handleRemoveBeat(idx)}
+                            >
+                              Remove
+                            </button>
                           </div>
-                          <div className="beat-dual-text">
-                            <div className="spoken-box">
-                              <label>🎙️ Spoken Audio Line ({editLang.toUpperCase()}):</label>
+                          <div className="shot-texts">
+                            <div>
+                              <label>Spoken Line ({editLang.toUpperCase()})</label>
                               <textarea
                                 rows={2}
                                 value={b.spoken_text}
                                 onChange={(e) => {
-                                  const copy = [...editBeats];
-                                  copy[idx] = { ...copy[idx], spoken_text: e.target.value };
-                                  setEditBeats(copy);
+                                  const cp = [...editBeats];
+                                  cp[idx] = { ...cp[idx], spoken_text: e.target.value };
+                                  setEditBeats(cp);
                                 }}
                               />
                             </div>
-                            <div className="subtitle-box">
-                              <label>💬 Burned-In English Subtitle (EN ONLY):</label>
+                            <div>
+                              <label>English Subtitle (EN Only)</label>
                               <textarea
                                 rows={2}
                                 value={b.en_subtitle}
                                 onChange={(e) => {
-                                  const copy = [...editBeats];
-                                  copy[idx] = { ...copy[idx], en_subtitle: e.target.value };
-                                  setEditBeats(copy);
+                                  const cp = [...editBeats];
+                                  cp[idx] = { ...cp[idx], en_subtitle: e.target.value };
+                                  setEditBeats(cp);
                                 }}
                               />
                             </div>
@@ -602,120 +777,51 @@ export default function App() {
                         </div>
                       ))}
                     </div>
+                    <button className="btn-secondary full-w" onClick={handleAddBeat}>
+                      + Add New Shot
+                    </button>
                   </div>
                 ) : (
-                  <div className="beats-list">
-                    {currentVideo.script.beats.map((b) => (
-                      <div key={b.beat_id} className="beat-card">
-                        <div className="beat-header">
-                          <span className="beat-num">BEAT #{b.beat_id}</span>
-                          <span className="beat-time">
-                            {b.start_time !== undefined
-                              ? `${b.start_time}s – ${b.end_time}s (${b.duration}s)`
-                              : '~3.0s beat'}
+                  <div className="shots-list">
+                    {(currentVideo.script?.beats || []).map((b) => (
+                      <div key={b.beat_id} className="shot-card">
+                        <div className="shot-head">
+                          <span className="shot-num">SHOT #{b.beat_id}</span>
+                          {b.start_time !== undefined && (
+                            <span className="shot-time">
+                              {b.start_time}s – {b.end_time}s
+                            </span>
+                          )}
+                          <span className="shot-tag">
+                            {b.speaker_gender === 'female' ? '👩' : '👨'} {b.speaker_name || b.speaker || 'Narrator'}
                           </span>
-                          <span className="beat-cue">🎥 {b.camera_action}</span>
-                          <span className="beat-cue">😀 {b.character_expression}</span>
-                          <span className="beat-cue">🔊 SFX: {b.sfx_cue}</span>
-                          <span className="beat-cue">🪧 Prop: {b.prop}</span>
+                          {b.reaction_fx && b.reaction_fx !== 'none' && (
+                            <span className="shot-tag fx">⚡ {b.reaction_fx}</span>
+                          )}
+                          <span className="shot-tag">🔊 {b.sfx_cue}</span>
+                          <span className="shot-tag props">
+                            🎨 {(b.props || []).map((p) => p.kind).join(', ') || b.prop}
+                          </span>
                         </div>
-
-                        <div className="beat-dual-text">
-                          <div className="spoken-box">
-                            <label>🎙️ Spoken Audio ({currentVideo.spoken_language_label}):</label>
+                        <div className="shot-texts">
+                          <div className="t-box">
+                            <label>🎙️ Spoken Audio</label>
                             <p>{b.spoken_text}</p>
                           </div>
-                          <div className="subtitle-box">
-                            <label>💬 Burned-In Subtitle (STRICT ENGLISH ONLY):</label>
-                            <p className="viral-caption">{b.en_subtitle}</p>
+                          <div className="t-box en">
+                            <label>💬 English Subtitle</label>
+                            <p>{b.en_subtitle}</p>
                           </div>
                         </div>
                       </div>
                     ))}
                   </div>
                 )}
-              </div>
-            ) : (
-              <div className="director-form">
-                <h3>Direct a New 22–28s Animated Short</h3>
-                <p>
-                  Default voiceover is set to <strong>Hindi (hi-IN)</strong> and subtitles are strictly locked to{' '}
-                  <strong>English Only</strong>. You can either <strong>Draft the Story First</strong> (to read/edit
-                  before rendering) or <strong>Render Immediately</strong>.
-                </p>
-
-                <label className="form-label">1. Pick Visual Animation Style</label>
-                <div className="style-grid">
-                  {STYLES.map((s) => (
-                    <div
-                      key={s.id}
-                      className={`style-option ${customStyle === s.id ? 'chosen' : ''}`}
-                      onClick={() => setCustomStyle(s.id)}
-                    >
-                      <strong>{s.name}</strong>
-                      <span>{s.desc}</span>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="form-row">
-                  <div>
-                    <label className="form-label">2. Voiceover Language (Default: Hindi)</label>
-                    <select value={customLang} onChange={(e) => setCustomLang(e.target.value)}>
-                      {LANGUAGES.map((l) => (
-                        <option key={l.code} value={l.code}>
-                          {l.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="form-label">3. Burned-In Subtitle Language</label>
-                    <input type="text" value="English Only (Locked)" disabled />
-                  </div>
-                </div>
-
-                <label className="form-label">4. Optional Custom Story Title</label>
-                <input
-                  type="text"
-                  placeholder="Leave blank to auto-pick next 8-beat viral Hindi story..."
-                  value={customTitle}
-                  onChange={(e) => setCustomTitle(e.target.value)}
-                />
-
-                <div className="director-btn-row">
-                  <button
-                    className="secondary-cta"
-                    disabled={!backendOnline || isRendering}
-                    onClick={() =>
-                      handleDraftStoryOnly({
-                        style: customStyle,
-                        spoken_language: customLang,
-                        ...(customTitle.trim() ? { custom_title: customTitle.trim() } : {}),
-                      })
-                    }
-                  >
-                    📝 Draft Story Only (Review Before Render)
-                  </button>
-                  <button
-                    className="primary-cta"
-                    disabled={!backendOnline || isRendering}
-                    onClick={() =>
-                      handleGenerateAndRender({
-                        style: customStyle,
-                        spoken_language: customLang,
-                        ...(customTitle.trim() ? { custom_title: customTitle.trim() } : {}),
-                      })
-                    }
-                  >
-                    🚀 Draft & Render 24s Reel Now
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </section>
-      </main>
+              </section>
+            </div>
+          )}
+        </main>
+      </div>
     </div>
   );
 }

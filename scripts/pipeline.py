@@ -1,62 +1,75 @@
 """
-End-to-End Local Faceless Shorts & Reels Rendering Engine (Interactive Progress Edition).
-- Default Voiceover: Hindi (hi-IN-MadhurNeural) with multi-language support
-- Strict English-Only word-by-word synced subtitles (.ASS, .SRT, and direct frame burn-in)
-- Guaranteed 20-28s duration enforcement (minimum ~2.8s per beat across 8-9 beats)
-- Real-time progress & backend log reporting to data/live_progress.json
+Faceless Shorts Renderer v3 — bright 2D cartoon, prop-driven, Whisper-synced.
+
+Stages
+  1. Voice:     edge-tts neural voices (default hi-IN-MadhurNeural, en-US-AndrewNeural for English)
+  2. Timing:    faster-whisper word timestamps on each beat's audio (fallback: edge-tts WordBoundary,
+                then energy detection) -> English-only Hormozi-style .ASS captions
+  3. Props:     props_engine extracts story props per beat and animates them as 2D cartoons
+                (pop/drop/slide entrances, idle motion, Ken Burns camera zoom, wipe transitions)
+  4. Encode:    ONE direct FFmpeg pass: 1080x1920 @ 30fps, libx264 -crf 18 -preset medium,
+                yuv420p, ASS burn-in, background music auto-ducked with sidechaincompress + fade-out
+Progress + logs stream to data/live_progress.json for the React dashboard.
 """
 import argparse
 import asyncio
 import json
 import math
-import os
 import shutil
-import socket
 import subprocess
-import sys
-import time
 import wave
 from datetime import datetime
 from pathlib import Path
 
+import re
+
 import numpy as np
+
+import captions
+import character_rig
+import props_engine
+import scene_planner
+from pipeline_fonts import font_path, get_font
 from sfx_generator import SAMPLE_RATE, ensure_audio_assets
+
+FPS = 30
+W, H = 1080, 1920
 
 VOICE_MAP = {
     "hi": "hi-IN-MadhurNeural",
+    "en": "en-US-AndrewNeural",
     "es": "es-MX-JorgeNeural",
     "fr": "fr-FR-HenriNeural",
     "ja": "ja-JP-KeitaNeural",
     "pt": "pt-BR-AntonioNeural",
     "de": "de-DE-ConradNeural",
-    "en": "en-US-ChristopherNeural",
+}
+
+VOICE_MAP_FEMALE = {
+    "hi": "hi-IN-SwaraNeural",
+    "en": "en-US-AriaNeural",
+    "es": "es-MX-DaliaNeural",
+    "fr": "fr-FR-DeniseNeural",
+    "ja": "ja-JP-NanamiNeural",
+    "pt": "pt-BR-FranciscaNeural",
+    "de": "de-DE-KatjaNeural",
 }
 
 
-def emit_progress(
-    base_dir: Path,
-    vid_id: str,
-    stage: str,
-    percent: int,
-    detail: str,
-    log_line: str | None = None,
-    running: bool = True,
-) -> None:
-    prog_path = base_dir / "data" / "live_progress.json"
+# ------------------------------------------------------------------ progress
+def emit_progress(base_dir, vid_id, stage, percent, detail, log_line=None, running=True) -> None:
+    prog_path = Path(base_dir) / "data" / "live_progress.json"
     prog_path.parent.mkdir(parents=True, exist_ok=True)
-    existing_logs: list[str] = []
+    logs: list[str] = []
     if prog_path.exists():
         try:
-            old = json.loads(prog_path.read_text(encoding="utf-8"))
-            existing_logs = old.get("logs", [])[-60:]
+            logs = json.loads(prog_path.read_text(encoding="utf-8")).get("logs", [])[-60:]
         except Exception:
             pass
     if log_line:
-        ts = datetime.now().strftime("%H:%M:%S")
-        formatted = f"[{ts}] {log_line}"
-        existing_logs.append(formatted)
-        print(formatted, flush=True)
-
+        line = f"[{datetime.now().strftime('%H:%M:%S')}] {log_line}"
+        logs.append(line)
+        print(line, flush=True)
     payload = {
         "running": running,
         "video_id": vid_id,
@@ -64,7 +77,7 @@ def emit_progress(
         "percent": max(0, min(100, int(percent))),
         "detail": detail,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
-        "logs": existing_logs[-60:],
+        "logs": logs[-60:],
     }
     try:
         prog_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -74,79 +87,23 @@ def emit_progress(
 
 def resolve_ffmpeg() -> tuple[str, str]:
     ff = shutil.which("ffmpeg")
-    fp = shutil.which("ffprobe")
-    if ff and fp:
-        return ff, fp
-    try:
-        import imageio_ffmpeg
-        ff = imageio_ffmpeg.get_ffmpeg_exe()
-        if ff:
-            return ff, ff
-    except Exception:
-        pass
-    try:
-        import static_ffmpeg
-        static_ffmpeg.add_paths()
-        ff = shutil.which("ffmpeg")
-        fp = shutil.which("ffprobe")
-        if ff and fp:
-            return ff, fp
-    except Exception:
-        pass
-    raise RuntimeError("FFmpeg not found. Ensure imageio-ffmpeg or system ffmpeg is installed.")
+    if ff:
+        return ff, shutil.which("ffprobe") or ff
+    import imageio_ffmpeg
+    ff = imageio_ffmpeg.get_ffmpeg_exe()
+    return ff, ff
 
 
-def _can_reach_edge_tts() -> bool:
-    try:
-        with socket.create_connection(("speech.platform.bing.com", 443), timeout=1.2):
-            return True
-    except Exception:
-        return False
-
-
-async def _edge_tts_save(text: str, voice: str, out_mp3: Path) -> bool:
-    try:
-        import edge_tts
-        communicate = edge_tts.Communicate(text, voice, rate="+4%")
-        await asyncio.wait_for(communicate.save(str(out_mp3)), timeout=6.0)
-        return out_mp3.exists() and out_mp3.stat().st_size > 200
-    except Exception:
-        return False
-
-
-def _fallback_tts_wav(text: str, out_wav: Path, target_dur: float = 3.1) -> None:
-    """Instant vectorized numpy vocal cadence synthesis when offline."""
-    out_wav.parent.mkdir(parents=True, exist_ok=True)
-    words = max(5, len(text.split()))
-    dur = max(target_dur, min(4.2, words * 0.28))
-    n = int(SAMPLE_RATE * dur)
-    t = np.linspace(0.0, dur, n, endpoint=False, dtype=np.float32)
-    syl = np.abs(np.sin(2 * np.pi * 4.4 * t)) ** 0.55
-    f0 = 138.0 + 26.0 * np.sin(2 * np.pi * 1.8 * t)
-    sig = (
-        np.sin(2 * np.pi * f0 * t) * 0.52
-        + np.sin(2 * np.pi * f0 * 2.0 * t) * 0.25
-        + np.sin(2 * np.pi * f0 * 3.0 * t) * 0.12
-    ) * syl * 0.65
-    pcm = np.clip(sig * 32767.0, -32767, 32767).astype(np.int16)
-    with wave.open(str(out_wav), "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(SAMPLE_RATE)
-        wf.writeframes(pcm.tobytes())
-
-
-def _read_wav_mono(path: Path) -> np.ndarray:
+# ------------------------------------------------------------------ audio io
+def _read_wav(path: Path) -> np.ndarray:
     with wave.open(str(path), "r") as wf:
         raw = wf.readframes(wf.getnframes())
-        ch = wf.getnchannels()
         arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-        if ch > 1:
-            arr = arr[::ch]
-        return arr
+        ch = wf.getnchannels()
+        return arr[::ch] if ch > 1 else arr
 
 
-def _write_wav_mono(path: Path, samples: np.ndarray) -> None:
+def _write_wav(path: Path, samples: np.ndarray) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     pcm = np.clip(samples * 32767.0, -32767, 32767).astype(np.int16)
     with wave.open(str(path), "w") as wf:
@@ -156,580 +113,494 @@ def _write_wav_mono(path: Path, samples: np.ndarray) -> None:
         wf.writeframes(pcm.tobytes())
 
 
-def synthesize_and_mix_audio(
-    script_data: dict, base_dir: Path, ffmpeg_bin: str
-) -> tuple[Path, list[dict], list[float]]:
-    vid_id = script_data["id"]
-    lang = script_data.get("spoken_language", "hi")
+async def _edge_tts(text: str, voice: str, out_mp3: Path) -> list[tuple[float, float, str]]:
+    """Synthesize with edge-tts, capturing WordBoundary events. Returns boundaries (sec)."""
+    import edge_tts
+
+    try:
+        comm = edge_tts.Communicate(text, voice, rate="+18%", boundary="WordBoundary")
+    except TypeError:
+        comm = edge_tts.Communicate(text, voice, rate="+18%")
+    bounds, audio = [], bytearray()
+    async for chunk in comm.stream():
+        if chunk["type"] == "audio":
+            audio.extend(chunk["data"])
+        elif chunk["type"] == "WordBoundary":
+            s = chunk["offset"] / 1e7
+            bounds.append((s, s + chunk["duration"] / 1e7, chunk.get("text", "")))
+    out_mp3.write_bytes(bytes(audio))
+    return bounds
+
+
+def _offline_voice(text: str, out_wav: Path, dur: float) -> None:
+    n = int(SAMPLE_RATE * dur)
+    t = np.linspace(0, dur, n, endpoint=False, dtype=np.float32)
+    f0 = 140 + 25 * np.sin(2 * np.pi * 1.8 * t)
+    sig = (np.sin(2 * np.pi * f0 * t) * 0.5 + np.sin(4 * np.pi * f0 * t) * 0.2) * np.abs(np.sin(2 * np.pi * 4.4 * t)) ** 0.6
+    _write_wav(out_wav, sig * 0.6)
+
+
+def build_audio(script: dict, base_dir: Path, ffmpeg: str) -> dict:
+    vid_id = script["id"]
+    lang = script.get("spoken_language", "hi")
     voice = VOICE_MAP.get(lang, VOICE_MAP["hi"])
-    style = script_data.get("style", "tall_tale_3d")
-    beats = script_data.get("beats", [])
-    num_beats = max(1, len(beats))
-
-    # Enforce at least 22 seconds total duration across all beats
-    min_total_target = 23.0
-    min_beat_seconds = max(2.75, min_total_target / num_beats)
-
-    emit_progress(
-        base_dir, vid_id, "Preparing Audio Assets", 5,
-        "Checking local procedural SFX & background music tracks...",
-        f"Initializing audio pipeline for {vid_id} (Voice: {voice}, Subtitles: EN-Only)"
-    )
+    beats = script.get("beats", [])
+    nb = max(1, len(beats))
+    min_beat = max(2.6, 22.0 / nb)
+    tmp = base_dir / "output" / "tmp" / vid_id
+    tmp.mkdir(parents=True, exist_ok=True)
     assets = ensure_audio_assets(base_dir)
-    tmp_dir = base_dir / "output" / "tmp" / vid_id
-    tmp_dir.mkdir(parents=True, exist_ok=True)
 
-    edge_online = _can_reach_edge_tts()
-    emit_progress(
-        base_dir, vid_id, "Synthesizing Voiceover", 8,
-        f"TTS Engine: {'Edge-TTS Neural (' + voice + ')' if edge_online else 'Local Offline Synth'}",
-        f"TTS mode: {'Neural (' + voice + ')' if edge_online else 'Offline Vector Synth (sandbox/offline)'}"
-    )
+    emit_progress(base_dir, vid_id, "Neural Voiceover (edge-tts)", 5,
+                  f"Voice: {voice} • Captions: faster-whisper word timestamps",
+                  f"Audio pipeline: edge-tts {voice} -> faster-whisper alignment -> EN .ASS")
 
-    timed_beats = []
-    voice_chunks: list[np.ndarray] = []
-    sfx_events: list[tuple[int, str]] = []
-    total_samples = 0
+    voice_chunks, sfx_marks, timed, total = [], [], [], 0
+    whisper_used = boundary_used = 0
+    for i, beat in enumerate(beats, start=1):
+        mp3, wav = tmp / f"beat_{i}.mp3", tmp / f"beat_{i}.wav"
+        vmap = VOICE_MAP_FEMALE if beat.get("speaker_gender") == "female" else VOICE_MAP
+        beat_voice = vmap.get(lang, VOICE_MAP["hi"])
+        clean_spoken = re.sub(r"^[A-Za-z]+:\s*", "", beat["spoken_text"]).strip()
+        clean_en_sub = re.sub(r"^[A-Za-z]+:\s*", "", beat["en_subtitle"]).strip()
+        bounds = []
+        try:
+            bounds = asyncio.run(_edge_tts(clean_spoken, beat_voice, mp3))
+            subprocess.run([ffmpeg, "-y", "-i", str(mp3), "-ac", "1", "-ar", str(SAMPLE_RATE), str(wav)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        except Exception as e:
+            emit_progress(base_dir, vid_id, "Neural Voiceover (edge-tts)", 5 + i * 3,
+                          "edge-tts unreachable — offline voice fallback", f"edge-tts failed on beat {i}: {type(e).__name__}")
+            _offline_voice(clean_spoken, wav, min_beat)
 
-    for idx, beat in enumerate(beats, start=1):
-        spoken = beat["spoken_text"]
-        mp3_path = tmp_dir / f"beat_{idx}.mp3"
-        norm_wav = tmp_dir / f"beat_{idx}.wav"
+        samples = _read_wav(wav)
+        nz = np.where(np.abs(samples) > 0.012)[0]
+        lead = max(0, int(nz[0]) - int(0.04 * SAMPLE_RATE)) if len(nz) else 0
+        tail = min(len(samples), int(nz[-1]) + int(0.18 * SAMPLE_RATE)) if len(nz) else len(samples)
+        samples = samples[lead:tail]
+        _write_wav(wav, samples)
+        lead_s = lead / SAMPLE_RATE
 
-        pct = 8 + int((idx / num_beats) * 24)
-        emit_progress(
-            base_dir, vid_id, "Synthesizing Voiceover", pct,
-            f"Generating voiceover for Beat {idx}/{num_beats} ({lang.upper()})...",
-            f"Beat {idx}/{num_beats} voiceover: \"{spoken[:48]}...\""
+        # Timing source of truth: Whisper -> WordBoundary -> energy
+        intervals = captions.whisper_word_intervals(base_dir, wav, lang)
+        src = "faster-whisper"
+        if intervals:
+            whisper_used += 1
+        elif bounds:
+            intervals = [(max(0.0, s - lead_s), max(0.05, e - lead_s), w) for s, e, w in bounds]
+            boundary_used += 1
+            src = "edge-tts WordBoundary"
+        else:
+            intervals = captions.energy_intervals(samples, SAMPLE_RATE)
+            src = "energy detection"
+
+        min_len = int(SAMPLE_RATE * min_beat)
+        if len(samples) < min_len:
+            samples = np.pad(samples, (0, min_len - len(samples)))
+        samples = np.concatenate([samples, np.zeros(int(SAMPLE_RATE * 0.12), dtype=np.float32)])
+
+        t0 = total / SAMPLE_RATE
+        total += len(samples)
+        t1 = total / SAMPLE_RATE
+        voice_chunks.append(samples)
+        sfx_marks.append((int(t0 * SAMPLE_RATE), beat.get("sfx_cue", "pop")))
+
+        en_words = clean_en_sub.split()
+        b = dict(beat)
+        b.update({
+            "start_time": round(t0, 3), "end_time": round(t1, 3), "duration": round(t1 - t0, 3),
+            "voice_used": beat_voice,
+            "en_words": captions.map_words_to_speech(en_words, intervals, t0, t1, same_lang=(lang == "en")),
+        })
+        timed.append(b)
+        emit_progress(base_dir, vid_id, "Neural Voiceover + Word Timing", 5 + int(i / nb * 25),
+                      f"Beat {i}/{nb}: {len(intervals)} speech words aligned",
+                      f"Beat {i}/{nb} voiced ({t1 - t0:.2f}s) • timing via {src} ({len(intervals)} words)")
+
+    voice = np.concatenate(voice_chunks)
+    sfx = np.zeros_like(voice)
+    for off, name in sfx_marks:
+        key = name if name in assets else "pop"
+        s = _read_wav(assets[key]) * 0.5
+        end = min(len(sfx), off + len(s))
+        sfx[off:end] += s[: end - off]
+
+    out_audio = base_dir / "output" / "audio"
+    voice_wav, sfx_wav = out_audio / f"{vid_id}.wav", tmp / "sfx.wav"
+    _write_wav(voice_wav, voice)
+    _write_wav(sfx_wav, sfx)
+
+    style = script.get("style", "tall_tale_3d")
+    custom = base_dir / "assets" / "music" / "bg_music.mp3"
+    music = custom if custom.exists() else assets[
+        "bgm_mystery" if style == "night_file_3d" else "bgm_sci" if style in ("deep_dive_3d", "inside_out") else "bgm_upbeat"]
+
+    spf = SAMPLE_RATE // FPS
+    frames = int(len(voice) / SAMPLE_RATE * FPS)
+    env = [min(1.0, float(np.sqrt(np.mean(voice[f * spf:(f + 1) * spf] ** 2))) * 4.5) for f in range(frames)]
+
+    emit_progress(base_dir, vid_id, "Audio Ready", 32,
+                  f"Whisper-aligned beats: {whisper_used}/{nb} • WordBoundary: {boundary_used}/{nb}",
+                  f"Voice {len(voice) / SAMPLE_RATE:.1f}s • music: {Path(music).name} (auto-ducked)")
+    return {"voice": voice_wav, "sfx": sfx_wav, "music": Path(music), "timed": timed,
+            "duration": len(voice) / SAMPLE_RATE, "envelope": env}
+
+
+# ------------------------------------------------------------------ 2D cartoon scene
+PALETTES = [  # sky top, sky bottom, hill back, hill front
+    ((90, 200, 255), (200, 240, 255), (120, 220, 120), (70, 190, 90)),
+    ((255, 170, 120), (255, 225, 170), (255, 140, 120), (240, 100, 120)),
+    ((160, 120, 255), (225, 200, 255), (110, 210, 200), (60, 180, 170)),
+    ((255, 210, 80), (255, 240, 170), (255, 150, 60), (240, 110, 60)),
+    ((80, 220, 200), (190, 255, 235), (90, 170, 255), (60, 130, 240)),
+    ((255, 130, 180), (255, 210, 230), (170, 120, 255), (130, 90, 230)),
+]
+WIPE_COLORS = [(255, 214, 40), (255, 72, 120), (50, 140, 255), (60, 210, 110), (160, 90, 255), (255, 150, 40)]
+
+
+def _make_style_bg(style: str, beat_idx: int):
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (W, H))
+    d = ImageDraw.Draw(img)
+
+    if style == "deep_dive_3d":
+        # Ref Reel 1 (1-Piston-2): Dark Navy Engineering Blueprint
+        for y in range(0, H, 8):
+            r = y / H
+            c = (int(12 + 10 * r), int(20 + 16 * r), int(36 + 24 * r))
+            d.rectangle([0, y, W, y + 8], fill=c)
+        for gx in range(0, W, 90):
+            d.line([(gx, 320), (gx, 1340)], fill=(22, 34, 56), width=1)
+        for gy in range(320, 1360, 90):
+            d.line([(0, gy), (W, gy)], fill=(22, 34, 56), width=1)
+        return img
+
+    if style == "tall_tale_3d":
+        # Ref Reel 2 (Japans-Overweight): Teal Wall + Baseboard + Warm Orange Checkerboard Floor
+        d.rectangle([0, 0, W, 860], fill=(16, 152, 166))
+        d.rectangle([0, 860, W, 886], fill=(246, 224, 176))
+        d.rectangle([0, 886, W, 1120], fill=(12, 92, 124))
+        floor_y = 1120
+        d.rectangle([0, floor_y, W, H], fill=(242, 132, 34))
+        tile = 108
+        for ry in range(floor_y, H, tile):
+            for rx in range(0, W, tile):
+                if ((rx // tile) + ((ry - floor_y) // tile)) % 2 == 0:
+                    d.rectangle([rx, ry, rx + tile, ry + tile], fill=(224, 114, 22))
+        return img
+
+    if style in ("night_file_3d", "paper_atlas"):
+        # Ref Reel 3 (Ravan-Lost-to): Atmospheric Mythic Golden/Indigo Sky + Dark Clouds
+        top = (28, 22, 48) if beat_idx % 2 == 0 else (56, 46, 28)
+        bot = (98, 72, 128) if beat_idx % 2 == 0 else (178, 148, 88)
+        for y in range(0, H, 8):
+            r = y / H
+            d.rectangle([0, y, W, y + 8], fill=tuple(int(top[k] + (bot[k] - top[k]) * r) for k in range(3)))
+        # Storm cloud silhouette top
+        for cx_c in (180, 480, 820):
+            d.ellipse([cx_c - 260, 180, cx_c + 260, 420], fill=(18, 16, 28))
+        d.rectangle([0, 1320, W, H], fill=(14, 12, 22))
+        return img
+
+    if style == "inside_out":
+        # Ref Reel 5 (American Trucks): Pastel Sky + Hills + Flat Asphalt Road
+        for y in range(0, 1140, 8):
+            r = y / 1140
+            d.rectangle([0, y, W, y + 8], fill=(int(196 + 40 * r), int(228 + 18 * r), int(242 + 8 * r)))
+        d.polygon([(0, 1140), (260, 760), (920, 760), (W, 1140)], fill=(132, 188, 110))
+        d.rectangle([0, 1140, W, 1520], fill=(62, 68, 74))
+        d.line([(0, 1158), (W, 1158)], fill=(255, 204, 34), width=6)
+        d.line([(0, 1504), (W, 1504)], fill=(245, 247, 250), width=8)
+        d.rectangle([0, 1520, W, H], fill=(105, 168, 88))
+        return img
+
+    # Ref Reel 4 (`stick_story` / Default): Bright 2D Doodle Sky + Mountains + Colorful Houses
+    pal = PALETTES[beat_idx % len(PALETTES)]
+    top, bot, h1, h2 = pal
+    for y in range(0, 1120, 8):
+        r = y / 1120
+        d.rectangle([0, y, W, y + 8], fill=tuple(int(top[k] + (bot[k] - top[k]) * r) for k in range(3)))
+    # Snow-capped mountains (Ref Reel 4)
+    for mx, mh, col in ((280, 620, (148, 164, 218)), (760, 580, (132, 148, 204)), (520, 720, (98, 148, 106))):
+        d.polygon([(mx - 280, 1120), (mx, mh), (mx + 280, 1120)], fill=col, outline=props_engine.OUTLINE, width=5)
+    d.rectangle([0, 1120, W, H], fill=(116, 184, 68))
+    # Row of colorful cartoon houses along horizon
+    house_cols = [(245, 196, 82), (242, 112, 98), (112, 182, 245), (142, 218, 118)]
+    for hi, hx in enumerate((130, 390, 650, 910)):
+        hc = house_cols[hi % 4]
+        d.rectangle([hx - 85, 980, hx + 85, 1120], fill=hc, outline=props_engine.OUTLINE, width=5)
+        d.polygon([(hx - 100, 980), (hx, 900), (hx + 100, 980)], fill=(185, 58, 48), outline=props_engine.OUTLINE, width=5)
+    return img
+
+
+def _wrap(text: str, n: int) -> list[str]:
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        if len(cur) + len(w) + 1 > n and cur:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = f"{cur} {w}".strip()
+    if cur:
+        lines.append(cur)
+    return lines[:2]
+
+
+def _draw_style_hud_and_title(d, style: str, title: str, beat: dict, bi: int, nb: int, t: float):
+    O = props_engine.OUTLINE
+    clean = title.replace("#Shorts", "").replace("[Hinglish]", "").replace("[English]", "").strip().upper()
+
+    if style == "deep_dive_3d":
+        # Ref Reel 1: Top Cyan Tag + White Title + 4-Column Live Telemetry Bar + Bottom Stepper
+        d.text((W // 2, 135), "HOW IT WORKS  ·  TECHNICAL BREAKDOWN", font=get_font(26), fill=(76, 218, 245), anchor="mm")
+        lines = _wrap(clean, 26)
+        for i, ln in enumerate(lines):
+            d.text((W // 2, 185 + i * 50), ln, font=get_font(42), fill=(255, 255, 255), anchor="mm")
+        d.line([(W // 2 - 70, 250), (W // 2 + 70, 250)], fill=(255, 204, 34), width=5)
+
+        # 4-Column Telemetry Box
+        d.rounded_rectangle([56, 275, W - 56, 395], radius=16, fill=(18, 28, 46), outline=(52, 74, 108), width=3)
+        metrics = [
+            ("PRESSURE", f"{1.1 + 0.3 * math.sin(t * 2):.1f} MPa"),
+            ("FORCE", f"{2.4 + 0.5 * abs(math.sin(t * 3)):.1f} kN"),
+            ("SPEED", f"{int(950 + 45 * math.sin(t * 5))} RPM"),
+            ("STAGE", f"#{bi + 1}/{nb}"),
+        ]
+        col_w = (W - 112) // 4
+        for mi, (m_lbl, m_val) in enumerate(metrics):
+            mx = 56 + mi * col_w + col_w // 2
+            d.text((mx, 310), m_lbl, font=get_font(20), fill=(138, 158, 188), anchor="mm")
+            d.text((mx, 352), m_val, font=get_font(34), fill=(76, 218, 245) if mi == 1 else (255, 255, 255), anchor="mm")
+
+        # Bottom 4-Step Process Stepper (PUSH - SLIDE - CLAMP - RELEASE)
+        steps = ["HOOK", "SETUP", "MECHANISM", "TWIST"]
+        active_s = min(3, int((bi / max(1, nb)) * 4))
+        sy = 1610
+        d.line([(180, sy), (W - 180, sy)], fill=(58, 74, 102), width=5)
+        for si, s_name in enumerate(steps):
+            sx = 180 + si * ((W - 360) // 3)
+            scol = (72, 228, 132) if si < active_s else ((255, 184, 42) if si == active_s else (68, 82, 108))
+            d.ellipse([sx - 18, sy - 18, sx + 18, sy + 18], fill=scol, outline=(255, 255, 255), width=3)
+            d.text((sx, sy + 36), s_name, font=get_font(22), fill=(210, 224, 245), anchor="mm")
+        return
+
+    if style == "inside_out":
+        # Ref Reel 5: Top-left dark pill badge + double-bordered white sign card
+        prop_tag = str(beat.get("prop", "INFO")).upper()[:10]
+        d.rounded_rectangle([48, 92, 250, 148], radius=14, fill=(28, 32, 38))
+        d.ellipse([68, 110, 88, 130], fill=(56, 217, 245))
+        d.text((162, 120), prop_tag, font=get_font(28), fill=(255, 255, 255), anchor="mm")
+
+        lines = _wrap(clean, 22)
+        d.rounded_rectangle([110, 200, W - 110, 360], radius=22, fill=(248, 250, 252), outline=O, width=6)
+        for i, ln in enumerate(lines):
+            d.text((W // 2, 250 + i * 58), ln, font=get_font(42), fill=(214, 118, 36) if i == 0 else O, anchor="mm")
+        return
+
+    if style in ("night_file_3d", "paper_atlas"):
+        # Ref Reel 3: Floating golden dust embers + atmospheric header
+        for k in range(14):
+            ex = (k * 173 + int(t * 22)) % W
+            ey = (k * 139 - int(t * 35)) % 1200 + 120
+            d.ellipse([ex - 4, ey - 4, ex + 4, ey + 4], fill=(255, 218, 120))
+        lines = _wrap(clean, 24)
+        for i, ln in enumerate(lines):
+            d.text((W // 2, 190 + i * 54), ln, font=get_font(40), fill=(245, 218, 138), anchor="mm")
+        return
+
+    # Ref Reel 2 (`tall_tale_3d`) & Ref Reel 4 (`stick_story`): Bold cartoon banner + right-side meter
+    lines = _wrap(clean, 24)
+    f = get_font(44)
+    h = 66 * len(lines) + 28
+    y0 = 150 + math.sin(t * 2) * 4
+    d.rounded_rectangle([70, y0, W - 70, y0 + h], radius=30, fill=(255, 255, 255), outline=O, width=7)
+    for i, ln in enumerate(lines):
+        d.text((W // 2, y0 + 46 + i * 66), ln, font=f, fill=O, anchor="mm")
+
+    if style == "stick_story":
+        # Ref Reel 4: Right-side vertical PITCH / LEVEL meter bar
+        mx = W - 78
+        d.text((mx, 1030), "LEVEL", font=get_font(22), fill=(255, 255, 255), anchor="mm")
+        d.rounded_rectangle([mx - 28, 1055, mx + 28, 1365], radius=12, fill=(24, 28, 38), outline=O, width=5)
+        active_bars = 3 + int(abs(math.sin(t * 4)) * 5)
+        for bi_b in range(8):
+            by = 1335 - bi_b * 34
+            bcol = (60, 220, 100) if bi_b < 4 else ((255, 214, 40) if bi_b < 6 else (255, 72, 88))
+            if bi_b < active_bars:
+                d.rounded_rectangle([mx - 18, by - 12, mx + 18, by + 12], radius=4, fill=bcol)
+
+
+def _draw_planned_cast(d, script: dict, beat: dict, t: float, mouth: float):
+    """
+    Renders the planned visible characters for this beat using human-proportioned
+    2D articulated rigs (`character_rig.draw_human_character`) — zero stickman limbs.
+    """
+    cast_list = script.get("production_bible", {}).get("cast", [])
+    cast_map = {c["id"]: c for c in cast_list}
+    default_char = cast_list[0] if cast_list else scene_planner.CHARACTER_TEMPLATES["narrator_male"]
+
+    vis = beat.get("scene_plan", {}).get("visible_characters", [])
+    if not vis:
+        vis = [{
+            "char_id": default_char["id"],
+            "x": 235,
+            "scale": 0.96,
+            "gesture": "explaining",
+            "emotion": beat.get("character_expression", "neutral"),
+            "is_speaking": True,
+        }]
+
+    era = script.get("production_bible", {}).get("era_and_setting", "")
+    if "Biscuit" in era or "Living Room" in era:
+        character_rig.draw_biscuit_cat(d, x=540.0, y=1310.0, scale=0.95, t=t)
+
+    for vc in vis:
+        spec = cast_map.get(vc.get("char_id"), default_char)
+        character_rig.draw_human_character(
+            d,
+            char_spec=spec,
+            x=float(vc.get("x", 235)),
+            ground_y=1355.0,
+            scale=float(vc.get("scale", 0.92)),
+            t=t,
+            mouth_open=mouth,
+            gesture=vc.get("gesture", "explaining"),
+            emotion=vc.get("emotion", beat.get("character_expression", "neutral")),
+            is_speaking=bool(vc.get("is_speaking", True)),
+            reaction_fx=vc.get("reaction_fx", beat.get("reaction_fx", "none")),
         )
 
-        ok = False
-        if edge_online:
-            ok = asyncio.run(_edge_tts_save(spoken, voice, mp3_path))
-            if not ok:
-                edge_online = False
 
-        if ok:
-            subprocess.run(
-                [
-                    ffmpeg_bin, "-y", "-i", str(mp3_path),
-                    "-ac", "1", "-ar", str(SAMPLE_RATE), str(norm_wav)
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=True,
-            )
-        else:
-            _fallback_tts_wav(spoken, norm_wav, target_dur=min_beat_seconds)
+def render_video(script: dict, audio: dict, ass_path: Path, base_dir: Path, ffmpeg: str) -> Path:
+    from PIL import ImageDraw
 
-        beat_samples = _read_wav_mono(norm_wav)
-        nz = np.where(np.abs(beat_samples) >= 0.015)[0]
-        if len(nz) > 0:
-            s_idx = max(0, int(nz[0]) - 600)
-            e_idx = min(len(beat_samples), int(nz[-1]) + 1200)
-            trimmed = beat_samples[s_idx:e_idx]
-        else:
-            trimmed = beat_samples
+    vid_id = script["id"]
+    timed = audio["timed"]
+    dur = audio["duration"]
+    env = audio["envelope"]
+    frames = len(env)
+    out_mp4 = base_dir / "output" / "videos" / f"{vid_id}.mp4"
+    out_mp4.parent.mkdir(parents=True, exist_ok=True)
 
-        min_len = int(SAMPLE_RATE * min_beat_seconds)
-        if len(trimmed) < min_len:
-            trimmed = np.pad(trimmed, (0, min_len - len(trimmed)))
+    # libass needs a fonts dir; run ffmpeg with cwd = subtitles folder to avoid Windows path escaping
+    sub_dir = ass_path.parent
+    fonts_dir = sub_dir / "fonts"
+    fonts_dir.mkdir(exist_ok=True)
+    fp = font_path()
+    if fp and not (fonts_dir / Path(fp).name).exists():
+        shutil.copy2(fp, fonts_dir / Path(fp).name)
 
-        gap = np.zeros(int(SAMPLE_RATE * 0.12), dtype=np.float32)
-        start_sample = total_samples
-        t_start = start_sample / SAMPLE_RATE
-        chunk_with_gap = np.concatenate([trimmed, gap])
-        voice_chunks.append(chunk_with_gap)
-        total_samples += len(chunk_with_gap)
-        t_end = total_samples / SAMPLE_RATE
-
-        sfx_name = beat.get("sfx_cue", "pop")
-        sfx_events.append((start_sample, sfx_name))
-
-        en_sub = beat["en_subtitle"].strip()
-        en_words = en_sub.split()
-        total_chars = max(1, sum(len(w) for w in en_words))
-        beat_dur = max(0.2, t_end - t_start)
-        word_timings = []
-        cursor = t_start
-        for w_i, w in enumerate(en_words):
-            w_dur = beat_dur * (len(w) / total_chars)
-            w_end = t_end if w_i == len(en_words) - 1 else cursor + w_dur
-            word_timings.append({"word": w, "start": round(cursor, 3), "end": round(w_end, 3)})
-            cursor = w_end
-
-        beat_copy = dict(beat)
-        beat_copy["start_time"] = round(t_start, 3)
-        beat_copy["end_time"] = round(t_end, 3)
-        beat_copy["duration"] = round(beat_dur, 3)
-        beat_copy["en_words"] = word_timings
-        timed_beats.append(beat_copy)
-
-    emit_progress(
-        base_dir, vid_id, "Mixing SFX & BGM", 35,
-        "Mixing voiceover with comedy SFX cues and ducked background music...",
-        f"Master audio length: {total_samples / SAMPLE_RATE:.2f}s (Target >= 20-25s)"
+    fade_out = max(0.0, dur - 1.8)
+    filt = (
+        f"[0:v]subtitles=filename={ass_path.name}:fontsdir=fonts[v];"
+        "[1:a]aformat=sample_rates=44100:channel_layouts=stereo,asplit=2[vo][sc];"
+        "[2:a]aformat=sample_rates=44100:channel_layouts=stereo[fx];"
+        f"[3:a]aformat=sample_rates=44100:channel_layouts=stereo,volume=0.5,atrim=0:{dur:.3f},asetpts=N/SR/TB[bg];"
+        "[bg][sc]sidechaincompress=threshold=0.02:ratio=10:attack=15:release=350[duck];"
+        f"[duck]afade=t=in:st=0:d=0.6,afade=t=out:st={fade_out:.3f}:d=1.8[bgf];"
+        "[vo][fx][bgf]amix=inputs=3:duration=first:normalize=0,alimiter=limit=0.95[a]"
     )
-
-    voice_track = np.concatenate(voice_chunks) if voice_chunks else np.zeros(SAMPLE_RATE * 22, dtype=np.float32)
-
-    bgm_key = (
-        "bgm_mystery" if style == "night_file_3d"
-        else "bgm_sci" if style in ("deep_dive_3d", "inside_out")
-        else "bgm_upbeat"
-    )
-    bgm_samples = _read_wav_mono(assets[bgm_key])
-    sfx_cache = {
-        k: _read_wav_mono(v)
-        for k, v in assets.items()
-        if not k.startswith("bgm_")
-    }
-
-    master = voice_track * 0.92
-    if len(bgm_samples) > 0:
-        tiled_bgm = np.resize(bgm_samples, len(master))
-        master = master + tiled_bgm * 0.16
-
-    for sample_offset, sfx_name in sfx_events:
-        s_arr = sfx_cache.get(sfx_name, sfx_cache.get("pop", np.zeros(0, dtype=np.float32)))
-        if len(s_arr) > 0:
-            end_off = min(len(master), sample_offset + len(s_arr))
-            seg_len = end_off - sample_offset
-            if seg_len > 0:
-                master[sample_offset:end_off] += s_arr[:seg_len] * 0.36
-
-    out_audio = base_dir / "output" / "audio" / f"{vid_id}.wav"
-    _write_wav_mono(out_audio, master)
-
-    fps = 24
-    total_frames = max(1, int((len(voice_track) / SAMPLE_RATE) * fps))
-    spf = max(1, int(SAMPLE_RATE / fps))
-    envelope = []
-    for f in range(total_frames):
-        chunk = voice_track[f * spf : (f + 1) * spf]
-        if len(chunk) > 0:
-            rms = float(np.sqrt(np.mean(chunk * chunk)))
-            envelope.append(min(1.0, rms * 4.2))
-        else:
-            envelope.append(0.0)
-
-    return out_audio, timed_beats, envelope
-
-
-def _fmt_srt_time(seconds: float) -> str:
-    ms = int(round((seconds % 1) * 1000))
-    s = int(seconds) % 60
-    m = (int(seconds) // 60) % 60
-    h = int(seconds) // 3600
-    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-
-
-def _fmt_ass_time(seconds: float) -> str:
-    cs = int(round((seconds % 1) * 100))
-    s = int(seconds) % 60
-    m = (int(seconds) // 60) % 60
-    h = int(seconds) // 3600
-    return f"{h:d}:{m:02d}:{s:02d}.{cs:02d}"
-
-
-def write_english_subtitles(vid_id: str, timed_beats: list[dict], base_dir: Path) -> tuple[Path, Path]:
-    sub_dir = base_dir / "output" / "subtitles"
-    sub_dir.mkdir(parents=True, exist_ok=True)
-    srt_path = sub_dir / f"{vid_id}.srt"
-    ass_path = sub_dir / f"{vid_id}.ass"
-
-    srt_lines = []
-    for idx, b in enumerate(timed_beats, start=1):
-        srt_lines.append(str(idx))
-        srt_lines.append(f"{_fmt_srt_time(b['start_time'])} --> {_fmt_srt_time(b['end_time'])}")
-        srt_lines.append(b["en_subtitle"])
-        srt_lines.append("")
-    srt_path.write_text("\n".join(srt_lines), encoding="utf-8")
-
-    ass_header = """[Script Info]
-ScriptType: v4.00+
-PlayResX: 1080
-PlayResY: 1920
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial Black,68,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,3,2,60,60,360,1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-"""
-    ass_events = []
-    for b in timed_beats:
-        words = b.get("en_words", [])
-        for active_idx, w_info in enumerate(words):
-            parts = []
-            for j, wj in enumerate(words):
-                if j == active_idx:
-                    parts.append(r"{\c&H00E6FF&\fscx112\fscy112}" + wj["word"] + r"{\c&HFFFFFF&\fscx100\fscy100}")
-                else:
-                    parts.append(wj["word"])
-            line_text = " ".join(parts)
-            ass_events.append(
-                f"Dialogue: 0,{_fmt_ass_time(w_info['start'])},{_fmt_ass_time(w_info['end'])},Default,,0,0,0,,{line_text}"
-            )
-    ass_path.write_text(ass_header + "\n".join(ass_events) + "\n", encoding="utf-8")
-    return srt_path, ass_path
-
-
-def _load_fonts():
-    from PIL import ImageFont
-    font_candidates = [
-        "C:/Windows/Fonts/arialbd.ttf",
-        "C:/Windows/Fonts/impact.ttf",
-        "C:/Windows/Fonts/segoeui.ttf",
-    ]
-    font_path = next((p for p in font_candidates if os.path.exists(p)), None)
-    if font_path:
-        return {
-            "sub_active": ImageFont.truetype(font_path, 60),
-            "sub_norm": ImageFont.truetype(font_path, 54),
-            "badge": ImageFont.truetype(font_path, 30),
-            "title": ImageFont.truetype(font_path, 40),
-            "prop": ImageFont.truetype(font_path, 44),
-        }
-    default = ImageFont.load_default()
-    return {k: default for k in ("sub_active", "sub_norm", "badge", "title", "prop")}
-
-
-def _draw_scene_background(draw, w: int, h: int, style: str, t: float, beat_idx: int):
-    palettes = {
-        "tall_tale_3d": ((26, 18, 58), (68, 34, 118), (255, 196, 46)),
-        "deep_dive_3d": ((6, 22, 38), (12, 64, 98), (0, 240, 255)),
-        "inside_out": ((24, 38, 32), (42, 88, 68), (110, 255, 160)),
-        "stick_story": ((22, 36, 66), (35, 68, 122), (255, 220, 90)),
-        "night_file_3d": ((12, 10, 20), (36, 18, 38), (255, 58, 76)),
-        "paper_atlas": ((58, 44, 28), (112, 86, 52), (255, 210, 125)),
-    }
-    top_c, bot_c, accent_c = palettes.get(style, palettes["tall_tale_3d"])
-
-    bands = 24
-    band_h = h // bands
-    for b in range(bands + 1):
-        ratio = b / bands
-        r = int(top_c[0] + (bot_c[0] - top_c[0]) * ratio)
-        g = int(top_c[1] + (bot_c[1] - top_c[1]) * ratio)
-        bl = int(top_c[2] + (bot_c[2] - top_c[2]) * ratio)
-        draw.rectangle([0, b * band_h, w, (b + 1) * band_h], fill=(r, g, bl))
-
-    horizon_y = 1120
-    draw.rectangle([0, horizon_y, w, h], fill=(int(top_c[0] * 0.7), int(top_c[1] * 0.7), int(top_c[2] * 0.7)))
-    for gx in range(-6, 7):
-        x_top = w // 2 + gx * 75
-        x_bot = w // 2 + gx * 240
-        draw.line([(x_top, horizon_y), (x_bot, h)], fill=(accent_c[0], accent_c[1], accent_c[2]), width=2)
-    for gy in range(1, 7):
-        y_line = horizon_y + int((gy / 6) ** 1.6 * (h - horizon_y))
-        draw.line([(0, y_line), (w, y_line)], fill=(accent_c[0] // 2, accent_c[1] // 2, accent_c[2] // 2), width=2)
-
-    if style == "deep_dive_3d":
-        draw.rectangle([130, 340, w - 130, 1080], outline=(0, 210, 255), width=3)
-    elif style == "night_file_3d":
-        pts = [(210, 420), (840, 480), (260, 790), (830, 860)]
-        for i in range(len(pts) - 1):
-            draw.line([pts[i], pts[i + 1]], fill=(220, 40, 55), width=4)
-        for px, py in pts:
-            draw.ellipse([px - 12, py - 12, px + 12, py + 12], fill=(255, 60, 70))
-    elif style == "paper_atlas":
-        draw.rectangle([110, 340, w - 110, 1080], fill=(218, 194, 148), outline=(120, 84, 42), width=6)
-
-
-def _draw_character_and_props(
-    draw, w: int, h: int, style: str, beat: dict, t: float, mouth_open: float, fonts: dict
-):
-    cam = beat.get("camera_action", "snap_zoom_in")
-    expr = beat.get("character_expression", "shocked")
-    pose = beat.get("character_pose", "hands_on_head")
-    prop = beat.get("prop", "LOOPHOLE")
-
-    cx = w // 2
-    cy = 770
-    if cam == "pan_left":
-        cx += int(math.sin(t * 2.2) * 45)
-    elif cam == "pan_right":
-        cx -= int(math.sin(t * 2.2) * 45)
-    elif cam == "shake":
-        cx += int(math.sin(t * 28.0) * 14)
-        cy += int(math.cos(t * 32.0) * 10)
-    else:
-        cy += int(math.sin(t * 6.0) * 12)
-
-    scale = 1.12 if cam == "snap_zoom_in" else 1.0
-
-    sh_w = int(170 * scale)
-    draw.ellipse([cx - sh_w, 1090, cx + sh_w, 1145], fill=(10, 10, 18))
-
-    body_w = int(125 * scale)
-    body_h = int(240 * scale)
-    torso_color = (235, 86, 64) if style != "deep_dive_3d" else (20, 130, 175)
-    draw.rounded_rectangle(
-        [cx - body_w, cy + 40, cx + body_w, cy + 40 + body_h],
-        radius=42,
-        fill=torso_color,
-        outline=(255, 255, 255),
-        width=5,
-    )
-
-    if style == "deep_dive_3d":
-        scan_y = 380 + int((math.sin(t * 3.2) * 0.5 + 0.5) * 650)
-        draw.line([(135, scan_y), (w - 135, scan_y)], fill=(0, 255, 230), width=5)
-        for r_i in range(4):
-            ry = cy + 85 + r_i * 38
-            draw.arc([cx - 85, ry, cx - 10, ry + 26], 180, 360, fill=(140, 255, 255), width=5)
-            draw.arc([cx + 10, ry, cx + 85, ry + 26], 180, 360, fill=(140, 255, 255), width=5)
-        pulse = int(8 * math.sin(t * 10.0))
-        draw.ellipse([cx - 28 - pulse, cy + 110 - pulse, cx + 12 + pulse, cy + 150 + pulse], fill=(255, 55, 95))
-
-    arm_y = cy + 85
-    if pose == "hands_on_head":
-        draw.line([(cx - body_w, arm_y), (cx - 165, cy - 95), (cx - 110, cy - 155)], fill=(255, 218, 170), width=22)
-        draw.line([(cx + body_w, arm_y), (cx + 165, cy - 95), (cx + 110, cy - 155)], fill=(255, 218, 170), width=22)
-    elif pose == "pointing":
-        draw.line([(cx - body_w, arm_y), (cx - 180, arm_y + 70)], fill=(255, 218, 170), width=22)
-        draw.line([(cx + body_w, arm_y), (cx + 230, arm_y - 55)], fill=(255, 218, 170), width=22)
-    else:
-        wave_y = int(math.sin(t * 8.0) * 35)
-        draw.line([(cx - body_w, arm_y), (cx - 200, arm_y + wave_y)], fill=(255, 218, 170), width=22)
-        draw.line([(cx + body_w, arm_y), (cx + 200, arm_y - wave_y)], fill=(255, 218, 170), width=22)
-
-    head_r = int(118 * scale)
-    hx, hy = cx, cy - 95
-    draw.ellipse(
-        [hx - head_r, hy - head_r, hx + head_r, hy + head_r],
-        fill=(255, 218, 170),
-        outline=(25, 20, 35),
-        width=6,
-    )
-
-    is_blink = (int(t * 10) % 37 == 0)
-    eye_dx = int(44 * scale)
-    eye_y = hy - 18
-    eye_r = int((26 if expr == "shocked" else 20) * scale)
-    for side in (-1, 1):
-        ex = hx + side * eye_dx
-        if is_blink:
-            draw.line([(ex - eye_r, eye_y), (ex + eye_r, eye_y)], fill=(25, 20, 35), width=6)
-        else:
-            draw.ellipse([ex - eye_r, eye_y - eye_r, ex + eye_r, eye_y + eye_r], fill=(255, 255, 255), outline=(20, 20, 30), width=4)
-            px = ex + int(math.sin(t * 3.0) * 5)
-            pr = int(eye_r * 0.48)
-            draw.ellipse([px - pr, eye_y - pr, px + pr, eye_y + pr], fill=(20, 22, 35))
-            draw.ellipse([px - pr // 2, eye_y - pr // 2, px, eye_y], fill=(255, 255, 255))
-
-    brow_y = eye_y - eye_r - 14
-    if expr == "angry":
-        draw.line([(hx - eye_dx - 25, brow_y - 12), (hx - eye_dx + 22, brow_y + 8)], fill=(25, 20, 35), width=8)
-        draw.line([(hx + eye_dx - 22, brow_y + 8), (hx + eye_dx + 25, brow_y - 12)], fill=(25, 20, 35), width=8)
-    elif expr == "shocked":
-        draw.arc([hx - eye_dx - 26, brow_y - 22, hx - eye_dx + 26, brow_y + 6], 180, 360, fill=(25, 20, 35), width=7)
-        draw.arc([hx + eye_dx - 26, brow_y - 22, hx + eye_dx + 26, brow_y + 6], 180, 360, fill=(25, 20, 35), width=7)
-    else:
-        draw.line([(hx - eye_dx - 24, brow_y), (hx - eye_dx + 24, brow_y - 6)], fill=(25, 20, 35), width=7)
-        draw.line([(hx + eye_dx - 24, brow_y - 6), (hx + eye_dx + 24, brow_y)], fill=(25, 20, 35), width=7)
-
-    my = hy + int(44 * scale)
-    mw = int(38 * scale)
-    mh = max(6, int((10 + 38 * mouth_open) * scale))
-    draw.rounded_rectangle([hx - mw, my - mh // 2, hx + mw, my + mh], radius=14, fill=(145, 22, 38), outline=(25, 20, 35), width=4)
-    if mh > 14:
-        draw.rectangle([hx - mw + 8, my - mh // 2 + 3, hx + mw - 8, my - mh // 2 + 12], fill=(255, 255, 255))
-
-    prop_label = str(prop).upper().replace("_", " ")
-    px, py = cx + 240, cy - 230 + int(math.sin(t * 4.5) * 16)
-    draw.rounded_rectangle([px - 135, py - 45, px + 135, py + 45], radius=22, fill=(255, 214, 10), outline=(20, 20, 28), width=4)
-    draw.text((px, py), prop_label[:13], font=fonts["prop"], fill=(20, 20, 28), anchor="mm")
-
-
-def _draw_english_captions_and_hud(
-    draw, w: int, h: int, script_data: dict, beat: dict, t: float, total_dur: float, fonts: dict
-):
-    prog = min(1.0, max(0.0, t / max(0.1, total_dur)))
-    draw.rectangle([0, 0, w, 14], fill=(40, 40, 55))
-    draw.rectangle([0, 0, int(w * prog), 14], fill=(255, 224, 20))
-
-    style_title = script_data.get("style", "tall_tale_3d").upper().replace("_", " ")
-    lang_label = script_data.get("spoken_language_label", "Hindi (hi-IN)")
-    draw.rounded_rectangle([42, 42, 420, 102], radius=18, fill=(18, 18, 28), outline=(255, 214, 10), width=2)
-    draw.text((231, 72), f"🎬 {style_title}", font=fonts["badge"], fill=(255, 214, 10), anchor="mm")
-
-    draw.rounded_rectangle([440, 42, w - 42, 102], radius=18, fill=(18, 18, 28), outline=(0, 230, 180), width=2)
-    draw.text(
-        ((440 + w - 42) // 2, 72),
-        f"🎙️ {lang_label}  |  💬 SUBS: ENGLISH ONLY",
-        font=fonts["badge"],
-        fill=(160, 255, 225),
-        anchor="mm",
-    )
-
-    words = beat.get("en_words", [])
-    if not words:
-        return
-    active_idx = 0
-    for i, wi in enumerate(words):
-        if wi["start"] <= t <= wi["end"]:
-            active_idx = i
-            break
-        if t > wi["end"]:
-            active_idx = i
-
-    lines: list[list[tuple[int, str]]] = []
-    cur_line: list[tuple[int, str]] = []
-    cur_chars = 0
-    for i, wi in enumerate(words):
-        w_str = wi["word"]
-        if cur_line and cur_chars + len(w_str) + 1 > 22:
-            lines.append(cur_line)
-            cur_line = [(i, w_str)]
-            cur_chars = len(w_str)
-        else:
-            cur_line.append((i, w_str))
-            cur_chars += len(w_str) + 1
-    if cur_line:
-        lines.append(cur_line)
-
-    base_y = 1320
-    line_step = 78
-    box_h = len(lines) * line_step + 48
-    draw.rounded_rectangle(
-        [68, base_y - 30, w - 68, base_y - 30 + box_h],
-        radius=28,
-        fill=(10, 10, 18),
-        outline=(255, 255, 255),
-        width=3,
-    )
-
-    for l_idx, line in enumerate(lines):
-        y = base_y + l_idx * line_step + 22
-        full_text = " ".join(w_str for _, w_str in line)
-        total_w = len(full_text) * 31
-        cursor_x = (w - total_w) // 2
-        for w_idx, w_str in line:
-            is_active = w_idx == active_idx
-            fnt = fonts["sub_active"] if is_active else fonts["sub_norm"]
-            color = (255, 230, 0) if is_active else (255, 255, 255)
-            for ox, oy in ((-3, -3), (3, -3), (-3, 3), (3, 3)):
-                draw.text((cursor_x + ox, y + oy), w_str, font=fnt, fill=(0, 0, 0), anchor="lm")
-            draw.text((cursor_x, y), w_str, font=fnt, fill=color, anchor="lm")
-            cursor_x += (len(w_str) + 1) * 31
-
-
-def render_animated_short(script_path: Path, base_dir: Path) -> dict:
-    from PIL import Image, ImageDraw
-
-    script_data = json.loads(script_path.read_text(encoding="utf-8"))
-    vid_id = script_data["id"]
-    ffmpeg_bin, _ = resolve_ffmpeg()
-
-    audio_path, timed_beats, envelope = synthesize_and_mix_audio(script_data, base_dir, ffmpeg_bin)
-    total_dur = timed_beats[-1]["end_time"] if timed_beats else 24.0
-
-    emit_progress(
-        base_dir, vid_id, "Aligning English Subtitles", 42,
-        f"Generating word-by-word English-only .SRT & .ASS captions ({len(timed_beats)} beats)...",
-        f"Subtitles locked to English-only across {total_dur:.1f}s timeline."
-    )
-    srt_path, ass_path = write_english_subtitles(vid_id, timed_beats, base_dir)
-
-    script_data["beats"] = timed_beats
-    script_data["total_duration"] = round(total_dur, 2)
-    script_path.write_text(json.dumps(script_data, indent=2, ensure_ascii=False), encoding="utf-8")
-
-    out_dir = base_dir / "output" / "videos"
-    insta_dir = base_dir / "output" / "instagram_ready"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    insta_dir.mkdir(parents=True, exist_ok=True)
-    out_mp4 = out_dir / f"{vid_id}.mp4"
-    insta_mp4 = insta_dir / f"{vid_id}.mp4"
-
-    w, h, fps = 1080, 1920, 24
-    total_frames = len(envelope)
-    fonts = _load_fonts()
-    style = script_data.get("style", "tall_tale_3d")
-
-    emit_progress(
-        base_dir, vid_id, "Rendering 9:16 Animation", 45,
-        f"Starting {total_frames} frames ({total_dur:.1f}s @ {fps}fps) in style '{style}'...",
-        f"FFmpeg H.264 encoder started -> output/videos/{vid_id}.mp4"
-    )
-
     cmd = [
-        ffmpeg_bin,
-        "-y",
-        "-f", "rawvideo",
-        "-vcodec", "rawvideo",
-        "-s", f"{w}x{h}",
-        "-pix_fmt", "rgb24",
-        "-r", str(fps),
-        "-i", "-",
-        "-i", str(audio_path),
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-shortest",
-        str(out_mp4),
+        ffmpeg, "-y", "-hide_banner",
+        "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-",
+        "-i", str(audio["voice"]), "-i", str(audio["sfx"]),
+        "-stream_loop", "-1", "-i", str(audio["music"]),
+        "-filter_complex", filt, "-map", "[v]", "-map", "[a]",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-r", str(FPS),
+        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-t", f"{dur:.3f}", str(out_mp4),
     ]
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    assert proc.stdin is not None
+    log_path = base_dir / "output" / "tmp" / vid_id / "ffmpeg.log"
+    log_f = open(log_path, "w", encoding="utf-8", errors="replace")
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log_f, stdout=subprocess.DEVNULL, cwd=str(sub_dir))
 
-    beat_idx = 0
-    base_bg = Image.new("RGB", (w, h))
-    _draw_scene_background(ImageDraw.Draw(base_bg), w, h, style, 0.0, 0)
+    style = script.get("style", "tall_tale_3d")
+    bgs = [_make_style_bg(style, i) for i in range(6)]
+    title = script.get("title", "")
+    emit_progress(base_dir, vid_id, "Animating 2D Cartoon Props", 36,
+                  f"{frames} frames @ {FPS}fps • Style: {style} • libx264 CRF 18 • ASS burn-in",
+                  f"FFmpeg single-pass encode started ({style}) -> {out_mp4.name}")
 
-    report_step = max(1, total_frames // 10)
-    for f in range(total_frames):
-        t = f / fps
-        while beat_idx < len(timed_beats) - 1 and t > timed_beats[beat_idx]["end_time"]:
-            beat_idx += 1
-        cur_beat = timed_beats[beat_idx]
-        mouth_val = envelope[f]
+    bi = 0
+    step = max(1, frames // 20)
+    try:
+        for f in range(frames):
+            t = f / FPS
+            while bi < len(timed) - 1 and t >= timed[bi]["end_time"]:
+                bi += 1
+            beat = timed[bi]
+            lt = t - beat["start_time"]
+            remaining = beat["end_time"] - t
+            prog = lt / max(0.1, beat["duration"])
+            zoom = 1.0 + 0.07 * prog if bi % 2 == 0 else 1.07 - 0.07 * prog  # Ken Burns in/out
 
-        img = base_bg.copy()
-        draw = ImageDraw.Draw(img)
-        _draw_character_and_props(draw, w, h, style, cur_beat, t, mouth_val, fonts)
-        _draw_english_captions_and_hud(draw, w, h, script_data, cur_beat, t, total_dur, fonts)
-        proc.stdin.write(img.tobytes())
+            img = bgs[bi % len(bgs)].copy()
+            d = ImageDraw.Draw(img)
+            _draw_style_hud_and_title(d, style, title, beat, bi, len(timed), t)
+            for p in beat.get("props", []):
+                props_engine.draw_prop(d, p, lt, remaining if bi < len(timed) - 1 else 9.0, zoom)
+            _draw_planned_cast(d, script, beat, t, env[f])
 
-        if f % report_step == 0 or f == total_frames - 1:
-            pct = 45 + int(((f + 1) / total_frames) * 47)
-            emit_progress(
-                base_dir,
-                vid_id,
-                "Rendering 9:16 Animation",
-                pct,
-                f"Rendering frame {f + 1}/{total_frames} ({t:.1f}s / {total_dur:.1f}s) • Beat #{beat_idx + 1}",
-                f"Rendered {f + 1}/{total_frames} frames ({int(((f + 1) / total_frames) * 100)}%)"
-            )
+            # wipe transition at each beat start (xfade-style)
+            if bi > 0 and lt < 0.25:
+                k = lt / 0.25
+                x = int(W * 1.4 * k) - 200
+                d.polygon([(x, 0), (x + 260, 0), (x + 60, H), (x - 200, H)], fill=WIPE_COLORS[bi % len(WIPE_COLORS)])
 
-    proc.stdin.close()
-    proc.wait()
+            proc.stdin.write(img.tobytes())
+            if f % step == 0:
+                emit_progress(base_dir, vid_id, "Animating 2D Cartoon Props", 36 + int((f + 1) / frames * 56),
+                              f"Frame {f + 1}/{frames} • Beat {bi + 1}/{len(timed)} • props: "
+                              + ", ".join(p['label'] for p in beat.get("props", [])),
+                              f"Encoded {int((f + 1) / frames * 100)}% ({f + 1}/{frames} frames)")
+        proc.stdin.close()
+    except BrokenPipeError:
+        pass
+    rc = proc.wait()
+    log_f.close()
+    if rc != 0:
+        tail = log_path.read_text(encoding="utf-8", errors="replace")[-600:]
+        raise RuntimeError(f"FFmpeg failed (rc={rc}): {tail}")
+    return out_mp4
 
-    shutil.copy2(out_mp4, insta_mp4)
-    emit_progress(
-        base_dir, vid_id, "Running QA Gate", 95,
-        "Verifying 9:16 resolution, 20-28s duration, audio dB, and English-only captions...",
-        f"Saved MP4 ({out_mp4.stat().st_size // 1024} KB) and Instagram copy."
-    )
-    return {
-        "id": vid_id,
-        "video_path": str(out_mp4),
-        "instagram_path": str(insta_mp4),
-        "audio_path": str(audio_path),
-        "srt_path": str(srt_path),
-        "ass_path": str(ass_path),
-        "duration": round(total_dur, 2),
-    }
+
+# ------------------------------------------------------------------ entry
+def render_animated_short(script_path: Path, base_dir: Path) -> dict:
+    script = json.loads(script_path.read_text(encoding="utf-8"))
+    vid_id = script["id"]
+    ffmpeg, _ = resolve_ffmpeg()
+
+    scene_planner.plan_story_scenes(script)
+    cast_names = ", ".join(c["name"] for c in script.get("production_bible", {}).get("cast", []))
+    emit_progress(base_dir, vid_id, "3-Step Scene & Cast Planning", 3,
+                  f"Planned Cast ({cast_names}) + 2D Props + Frame Blocking",
+                  f"Cast: [{cast_names}] | Props: " + " | ".join(f"B{b['beat_id']}: " + ",".join(p['kind'] for p in b['props']) for b in script["beats"]))
+
+    audio = build_audio(script, base_dir, ffmpeg)
+    ass_path, srt_path = captions.write_ass_and_srt(vid_id, audio["timed"], base_dir / "output" / "subtitles")
+    emit_progress(base_dir, vid_id, "Captions Ready", 34, f"Hormozi-style ASS: {ass_path.name}",
+                  f"Wrote {ass_path.name} (word-level, yellow active word, lower third)")
+
+    script["beats"] = audio["timed"]
+    script["total_duration"] = round(audio["duration"], 2)
+    script_path.write_text(json.dumps(script, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    out_mp4 = render_video(script, audio, ass_path, base_dir, ffmpeg)
+    insta = base_dir / "output" / "instagram_ready" / out_mp4.name
+    insta.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(out_mp4, insta)
+    # Clean up temporary per-beat WAV/MP3/log chunks to keep disk clean
+    tmp_dir = base_dir / "output" / "tmp" / vid_id
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    emit_progress(base_dir, vid_id, "Running QA Gate", 95, "Verifying 1080x1920 H.264, duration, loudness, EN captions",
+                  f"Saved {out_mp4.name} ({out_mp4.stat().st_size // 1024} KB) + Instagram copy")
+    return {"id": vid_id, "video_path": str(out_mp4), "ass_path": str(ass_path), "srt_path": str(srt_path),
+            "duration": script["total_duration"]}
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--script", required=True, help="Path to script JSON file")
-    args = parser.parse_args()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--script", required=True)
+    args = ap.parse_args()
     root = Path(__file__).resolve().parent.parent
-    res = render_animated_short(Path(args.script).resolve(), root)
-    print(json.dumps(res, indent=2))
+    print(json.dumps(render_animated_short(Path(args.script).resolve(), root), indent=2))

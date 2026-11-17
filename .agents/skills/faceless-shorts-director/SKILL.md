@@ -1,114 +1,60 @@
 ---
 name: faceless-shorts-director
 description: >-
-  Autonomous scriptwriter, multilingual voice director, 6-style animator, QA reviewer,
-  and daily 6:00 PM -> 9:00 PM YouTube Shorts / Instagram Reels scheduler. Activate this
-  skill whenever generating faceless animated shorts scripts, rendering videos, reviewing
-  pending shorts, or running the daily automation pipeline.
+  Autonomous 2D animated skit & explainer scriptwriter, multi-voice director, character/set
+  designer, prop animator, QA reviewer, and daily 6:00 PM -> 9:00 PM YouTube Shorts /
+  Instagram Reels scheduler. Activate this skill whenever generating scripts on any new topic,
+  designing characters/sets, rendering 2D animated videos, or running the daily pipeline.
 ---
 
-# Faceless Shorts Director Skill
+# Faceless Shorts & 2D Animated Skit Director Skill
 
-Use this skill to autonomously write, render, review, and schedule viral faceless animated Shorts & Reels in `d:\Programs\Projects\automatic-YT` using **100% free local tools** (no paid LLM or video APIs).
-
----
-
-## 1. Scriptwriting & Reference Reel Rules (Casual, Funny, Edgy, Realistic)
-
-- **Reference Reels Folder (`d:\Programs\Projects\automatic-YT\assets\reference_reels\`):**
-  - Before generating scripts or tuning visual styles, check `assets/reference_reels/` for any reference `.mp4`/`.mov` reels added by the user to match their pacing, visual style, humor, caption styling, and storytelling tone.
-
-When generating a script, **Antigravity acts directly as the scriptwriter** (never call an external paid LLM API). Write scripts directly into `data/scripts/<video_id>.json` following these rules:
-
-1. **Zero Corporate/AI Stiffness:**
-   - Never start with *"Today we are looking at..."*, *"Did you know..."*, or *"In a world where..."*.
-   - Write the way a funny, slightly unhinged friend tells a wild story at 2 AM: blunt, sarcastic, fast-paced, using natural slang (*"bro"*, *"literally"*, *"what the hell"*, *"crap"*, *"no shot"*, *"deadass"*, *"Wait, it gets dumber"*).
-   - Keep profanity **monetization-safe (PG-13 edgy/sarcastic)** so YouTube Shorts and Instagram Reels do not suppress reach or demonetize the video.
-2. **2-Second Hook Rule:**
-   - `Beat 1` (`0.0s – 2.2s`) MUST drop the wildest punchline or absurd premise immediately.
-3. **20–28 Second Duration & 2-Second Visual Pacing:**
-   - Break every script into **8 to 10 beats** (`~2.8s – 3.3s` per beat, total duration **at least `20s – 25s+`**, target `22s – 28s`).
-   - Every beat MUST change `camera_action`, `character_expression`, `pose`, and `sfx_cue`.
-4. **Seamless Loop Ending:**
-   - The final beat's spoken line and English subtitle MUST end mid-thought or with a connector (*"...which is the exact reason why"* / *"...and if you think that's crazy, remember how"*) that grammatically flows straight back into `Beat 1`.
-5. **Default Hindi Voiceover + Strict English-Only Subtitles:**
-   - **Default Spoken Language:** **Hindi (`hi` / `Hindi (hi-IN)`)** unless overridden (also supports `es`, `fr`, `ja`, `pt`, `de`, `en`).
-   - **Subtitle Language:** Strictly **English Only (`en`)**.
-   - Every beat contains **two paired text fields**:
-     - `spoken_text`: Written naturally in the target voiceover language (default Hindi `hi-IN` with natural conversational phrasing: *"भाई"*, *"यार"*, *"क्या मज़ाक चल रहा है?"*).
-     - `en_subtitle`: Punchy, viral **English-only** caption (`6–14 words` per beat) that gets burned into the video with word-by-word yellow highlighting.
+Use this skill to write, plan, render, and review 2D animated Shorts & Reels in `d:\Programs\Projects\automatic-YT` modeled after the reference production blueprint in [SHOT_BY_SHOT_SCRIPT_SPEC.md](./references/SHOT_BY_SHOT_SCRIPT_SPEC.md) (derived from `scripts/reference/10 Questions Before Marriage 2D Animated Skit Script.docx`).
 
 ---
 
-## 2. The 6 Visual Styles
+## 1. How to Generate a Proper Script on ANY New Topic
 
-Pick one of the 6 styles from [Faceless Shorts Automation.md](../../Faceless%20Shorts%20Automation.md):
+Whenever asked to generate a script on a new topic, NEVER write generic narration lines. Always build a **Character-Driven 2D Animated Skit / Explainer** following these 6 steps:
 
-| Style ID | Style Name | Visual Theme & Palette | Best Topics |
-|---|---|---|---|
-| `tall_tale_3d` | **Tall Tale 3D** | Expressive 2D cartoon characters inside a bright 3D parallax miniature stage | Absurd loopholes, dumb heists, bizarre true history |
-| `deep_dive_3d` | **Deep Dive 3D** | Dark neon medical/science grid with glowing X-ray anatomy & zoom scans | "What happens if..." body/science explainers |
-| `inside_out` | **Inside Out** | Clean split-screen 2D cross-section cutaways & diagram callouts | Fast biology, tech, or everyday mechanics |
-| `stick_story` | **Stick Story** | High-energy expressive stick figures on textured notebook/blueprint canvas | Chaotic survival hacks & "What would you do if..." |
-| `night_file_3d` | **Night File 3D** | Moody volumetric fog, spotlight cones, red evidence strings, noir depth | Unsolved mysteries, creepy history, weird disappearances |
-| `paper_atlas` | **Paper Atlas** | Vintage parchment map, animated dashed travel paths, 3D compass & territory pins | Crazy ancient battles, empires, doomed voyages |
-
----
-
-## 3. Script JSON Schema (`data/scripts/<id>.json`)
-
-Always write scripts matching this exact schema:
-
-```json
-{
-  "id": "short_20261115_1800",
-  "title": "He Bought a Whole Bank for $1?! #Shorts",
-  "description": "The dumbest legal loophole in banking history... #shorts #viral #storytime",
-  "tags": ["shorts", "storytime", "funny", "history", "animation"],
-  "style": "tall_tale_3d",
-  "spoken_language": "es",
-  "spoken_language_label": "Spanish (es-MX)",
-  "subtitle_language": "en",
-  "scheduled_upload_time": "21:00",
-  "hook_score": 9.4,
-  "loop_bridge": "...which is literally how in",
-  "beats": [
-    {
-      "beat_id": 1,
-      "spoken_text": "En 1999, un tipo compró un banco entero por un maldito dólar, ¿qué demonios?",
-      "en_subtitle": "In 1999, a guy bought a whole bank for ONE dollar—what the hell?!",
-      "character_expression": "shocked",
-      "character_pose": "hands_on_head",
-      "camera_action": "snap_zoom_in",
-      "prop": "dollar_bill",
-      "sfx_cue": "vine_boom"
-    }
-  ]
-}
-```
+1. **Logline & Comic Premise:**
+   - Turn the topic into a relatable, high-stakes comic interaction between **2 contrasting characters** (plus an optional silent judge pet/sidekick like *Biscuit the cat*):
+     - **Character A (The Overthinker / Challenger):** Anxious, dramatic, asks wild questions or panics when things go wrong (e.g., *Rohan* in mustard hoodie `#F2B632` with round glasses, or *Laxman*, or *Office Employee*).
+     - **Character B (The Sassy Boss / Expert):** Calm, confident, deadpan comic timing, signature one-eyebrow raise, turns "villain" with glowing red eyes on savage punchlines (e.g., *Meera* in coral-pink hoodie `#FF7F7F` with ponytail & bindi, or *Urmila/Sita*, or *HR Inspector*).
+     - **Sidekick / Pet (The Silent Judge):** Unimpressed observer (e.g., *Biscuit* the chubby orange tabby `#F28C28`) who steals the prop or stares at the camera on the punchline.
+2. **Design the Character Sheets & Era/Gender Outfits (`production_bible.cast`):**
+   - Specify `gender` (`"male"` | `"female"`), `costume` (with exact `#HEX` palette), `hair`, `accessory`, and `voice_gender` so:
+     - **Male characters** are voiced by `hi-IN-MadhurNeural` (Hinglish) / `en-US-AndrewNeural` (English).
+     - **Female characters** are voiced by `hi-IN-SwaraNeural` (Hinglish) / `en-US-AriaNeural` (English).
+   - Dress characters accurately for their era and gender (e.g., Ancient India Saree & jewelry for Sita/Urmila; Dhoti, Angavastram & Bow for Ram/Laxman; Cozy Living Room hoodies for Rohan & Meera; Corporate Suits for Office skits).
+3. **Design the Single Cohesive Set (`production_bible.set_design`):**
+   - Define the room/stage with exact `#HEX` colors, furniture (e.g., center sofa `#E8D9C0`, coffee table with chai & popcorn, fairy lights, sunset window `#FF9E5E`), and lighting mood.
+4. **Write 8 Shot-by-Shot Beats (`25s–42s` Total) With Visual Gags & Reaction FX:**
+   - Every beat (`Shot 1`..`Shot 8`) must specify:
+     - `speaker`: Which character is speaking (`"rohan"`, `"meera"`, `"laxman"`, `"urmila"`, etc.)
+     - `camera_action`: `"wide_establishing"`, `"medium_two_shot"`, `"close_up_reaction"`, or `"slow_push_in"`
+     - `reaction_fx`: `"sweat_drops"`, `"villain_red_eyes"`, `"storm_cloud"`, `"hearts"`, `"stars"`, `"frost"`, `"question_marks"`, or `"none"`
+     - `spoken_text`: Natural Indian **Hinglish** dialogue (mixing Hindi with everyday English words like normal Indian conversations) for the `_hi` version, or English dialogue for the `_en` version.
+     - `en_subtitle`: Punchy **English-only** subtitle (`6–13 words`).
+     - `sfx_cue`: `"vine_boom"`, `"record_scratch"`, `"ding"`, `"pop"`, or `"whoosh"`.
+5. **Dual Hinglish + English Output:**
+   - Always generate both the **Hinglish (`_hi`)** and **English (`_en`)** versions of the script so both Reels can be rendered and published.
+6. **YouTube Packaging:**
+   - Include a high-CTR Title, 3-word Thumbnail Text, Description, and Tags.
 
 ---
 
-## 4. End-to-End Execution Pipeline
+## 2. Execution Commands
 
-Run these steps in order during every manual or scheduled 6:00 PM execution:
-
-1. **Check Topic History:**
-   - Read `data/pipeline_state.json` to see previously generated topics and rotate the language and visual style.
-2. **Author New Script:**
-   - Create `data/scripts/<id>.json` following the schema above.
-3. **Render Audio, English Subtitles & Animated `.MP4`:**
-   - Run:
-     ```powershell
-     .\.venv\Scripts\python.exe scripts/pipeline.py --script data/scripts/<id>.json
-     ```
-   - This synthesizes the multi-language voiceover, computes exact per-word English subtitle timestamps (`.ass`), renders the 30fps `1080×1920` animated visual scenes with SFX + BGM, and outputs `output/videos/<id>.mp4`.
-4. **Run Automated QA Review Gate:**
-   - Run:
-     ```powershell
-     .\.venv\Scripts\python.exe scripts/review_video.py --video output/videos/<id>.mp4 --script data/scripts/<id>.json
-     ```
-   - Verifies `1080×1920` resolution, duration `15s–58s`, non-silent audio track, English-only subtitle integrity, and updates `data/pipeline_state.json` to `"status": "scheduled_9pm"`.
-5. **Schedule Upload for 9:00 PM:**
-   - Save Instagram-ready copy to `output/instagram_ready/<id>.mp4`.
-   - Queue or execute the 9:00 PM YouTube Shorts scheduled upload via `scripts/schedule_upload.py` (or via Antigravity Browser in YouTube Studio).
+- **Generate a New Topic Skit Pair (Hinglish + English) via CLI or Server:**
+  ```powershell
+  .\.venv\Scripts\python.exe scripts/story_generator.py
+  ```
+- **Render Video (Multi-Voice `edge-tts` + `faster-whisper` `.ASS` + 2D Human Rig + Cartoon FX + FFmpeg `-crf 18`):**
+  ```powershell
+  .\.venv\Scripts\python.exe scripts/pipeline.py --script data/scripts/<id>.json
+  ```
+- **Run QA Review Gate:**
+  ```powershell
+  .\.venv\Scripts\python.exe scripts/review_video.py --video output/videos/<id>.mp4 --script data/scripts/<id>.json
+  ```

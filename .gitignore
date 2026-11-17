@@ -1,10 +1,13 @@
 # Guide & Specification Docs (Excluded from GitHub per project rules)
 Faceless Shorts Automation.md
 WORKFLOW_AND_REQUIREMENTS.md
+scripts/reference/*
+!scripts/reference/.gitkeep
 
-# Python Virtual Environment & Bytecode
+# Python Virtual Environment, Whisper Models & Bytecode
 .venv/
 venv/
+models/
 __pycache__/
 *.py[cod]
 *$py.class
@@ -18,6 +21,7 @@ npm-debug.log*
 # Generated Data & Scripts (Keep folder structure via .gitkeep, ignore generated files)
 data/pipeline_state.json
 data/live_progress.json
+data/used_topics.json
 data/scripts/*
 !data/scripts/.gitkeep
 data/qa_reports/*
