@@ -542,9 +542,44 @@ def render_short_project(
     script.updated_at = datetime.now().isoformat(timespec="seconds")
     save_script(script)
     _prog(100, "Render complete!")
-
     _log(
         f"[Pipeline] Render complete: {out_mp4.name} "
         f"({total_audio_dur}s, QA={'PASS' if qa_report.get('passed') else 'FAIL'})"
     )
     return script
+
+
+def cleanup_rendered_artifacts(
+    script: ScriptSchema,
+    log_fn: Optional[Callable[[str], None]] = None,
+) -> None:
+    """
+    Delete local rendered MP4/SRT and temporary WAV/ASS files after a successful YouTube upload
+    to keep disk space free, while preserving the script JSON & story_history.txt for deduplication.
+    """
+    import shutil
+
+    removed_items: List[str] = []
+
+    if script.video_path:
+        mp4_path = Path(script.video_path)
+        if mp4_path.exists():
+            mp4_path.unlink()
+            removed_items.append(mp4_path.name)
+
+    srt_path = RENDERS_DIR / f"{script.id}.srt"
+    if srt_path.exists():
+        srt_path.unlink()
+        removed_items.append(srt_path.name)
+
+    temp_work_dir = TEMP_DIR / script.id
+    if temp_work_dir.exists() and temp_work_dir.is_dir():
+        shutil.rmtree(temp_work_dir, ignore_errors=True)
+        removed_items.append(f"temp/{script.id}/")
+
+    script.video_path = None
+    script.video_url = None
+    save_script(script)
+
+    if log_fn and removed_items:
+        log_fn(f"[Cleanup] Freed local storage after YouTube upload (removed {', '.join(removed_items)}; kept script & story history).")

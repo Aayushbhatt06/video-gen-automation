@@ -55,6 +55,7 @@ from backend.schemas import (
 from backend.story_memory import SEED_ANGLES_BY_PRESET, load_story_history_lines
 from backend.video_composer import (
     SUPPORTED_VIDEO_EXTS,
+    cleanup_rendered_artifacts,
     ensure_default_gameplay_clip,
     list_background_clips,
     render_short_project,
@@ -305,6 +306,7 @@ def _schedule_and_upload_scheduled(script: ScriptSchema) -> Dict:
         script.scheduled_slot_display = slot.slot_local_display
         script.status = "scheduled_public"
         save_script(script)
+        cleanup_rendered_artifacts(script, log_fn=automation_manager.log)
         return {
             "script": script,
             "slot": updated_slot,

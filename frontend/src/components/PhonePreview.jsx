@@ -42,6 +42,22 @@ export default function PhonePreview({
               playsInline
               className="w-full h-full object-cover"
             />
+          ) : script?.youtube_video_id ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-5 text-center space-y-2.5 bg-slate-950">
+              <CheckCircle2 className="w-9 h-9 text-emerald-400" />
+              <p className="text-xs font-bold text-white">Uploaded &amp; Scheduled on YouTube</p>
+              <p className="text-[11px] text-slate-400">
+                Local MP4 deleted to save storage. Script &amp; story memory preserved.
+              </p>
+              <a
+                href={`https://youtube.com/shorts/${script.youtube_video_id}`}
+                target="_blank"
+                rel="noreferrer"
+                className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-semibold"
+              >
+                Open on YouTube
+              </a>
+            </div>
           ) : selectedBg?.video_url ? (
             <>
               <video

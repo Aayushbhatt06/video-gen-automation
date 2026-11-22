@@ -21,7 +21,7 @@ from backend.scheduler import (
     update_slot_after_upload,
 )
 from backend.story_memory import pick_next_autonomous_preset
-from backend.video_composer import render_short_project
+from backend.video_composer import cleanup_rendered_artifacts, render_short_project
 from backend.youtube_uploader import (
     get_youtube_auth_status,
     promote_unlisted_video_to_public,
@@ -364,6 +364,8 @@ class AutomationManager:
             script.scheduled_slot_display = slot.slot_local_display
             script.status = "scheduled_public"
             save_script(script)
+
+            cleanup_rendered_artifacts(script, log_fn=self.log)
 
             self.cycles_completed += 1
             self._save_persisted_state()
