@@ -13,7 +13,7 @@ const PHASE_LABELS = {
   idle: "Idle & Ready",
   generating_story: "Writing Unique Emotional English Story...",
   rendering_video: "Synthesizing Qwen3-TTS & Composing 9:16 Short...",
-  uploading_youtube: "Uploading Unlisted to YouTube for HD Processing...",
+  uploading_youtube: "Uploading & Scheduling on YouTube (publishAt)...",
   cooldown: "Cooling Down Before Next Story...",
   waiting_daily_quota: "Daily Upload Cap Reached (Waiting Reset)",
   runway_full: "Multi-Day Schedule Runway Full",

@@ -125,7 +125,7 @@ export default function PhonePreview({
                     <Youtube className="w-3.5 h-3.5" />
                     {script.scheduled_slot_display
                       ? `Scheduled (${script.scheduled_slot_display})`
-                      : "Upload Unlisted & Schedule Slot"}
+                      : "Schedule Upload to YouTube"}
                   </>
                 )}
               </button>

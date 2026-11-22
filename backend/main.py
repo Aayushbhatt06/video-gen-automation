@@ -64,7 +64,7 @@ from backend.youtube_uploader import (
     get_authenticated_youtube_service,
     get_youtube_auth_status,
     promote_unlisted_video_to_public,
-    upload_short_as_unlisted,
+    upload_short_scheduled,
 )
 
 
@@ -280,7 +280,7 @@ def api_render_script(script_id: str, req: RenderRequest, background_tasks: Back
         try:
             rendered = render_short_project(script, log_fn=automation_manager.log)
             if req.auto_upload_youtube and rendered.status == "rendered":
-                _schedule_and_upload_unlisted(rendered)
+                _schedule_and_upload_scheduled(rendered)
         except Exception as e:
             automation_manager.log(f"[Render Error] {script.id}: {e}")
 
@@ -288,23 +288,26 @@ def api_render_script(script_id: str, req: RenderRequest, background_tasks: Back
     return {"started": True, "script_id": script.id, "status": "rendering"}
 
 
-def _schedule_and_upload_unlisted(script: ScriptSchema) -> Dict:
+def _schedule_and_upload_scheduled(script: ScriptSchema) -> Dict:
     slot = allocate_next_slot(script_id=script.id, script_title=script.youtube_meta.title)
     if not slot:
         raise RuntimeError("No free schedule slots available within MAX_DAYS_AHEAD")
 
     try:
-        res = upload_short_as_unlisted(script, log_fn=automation_manager.log)
+        res = upload_short_scheduled(
+            script,
+            publish_at_iso=slot.slot_iso,
+            log_fn=automation_manager.log,
+        )
         vid_id = res["video_id"]
-        priv = res.get("privacy_status", "unlisted")
         updated_slot = update_slot_after_upload(
             slot_id=slot.slot_id,
             youtube_video_id=vid_id,
-            privacy_status=priv,
+            privacy_status="scheduled",
             processing_status="processing",
         )
         script.youtube_video_id = vid_id
-        script.youtube_privacy = priv
+        script.youtube_privacy = "scheduled"
         script.scheduled_slot_iso = slot.slot_iso
         script.scheduled_slot_display = slot.slot_local_display
         script.status = "scheduled_public"
@@ -335,7 +338,7 @@ def api_schedule_youtube_upload(script_id: str):
         raise HTTPException(status_code=400, detail="Render the Short first before uploading to YouTube.")
 
     try:
-        return _schedule_and_upload_unlisted(script)
+        return _schedule_and_upload_scheduled(script)
     except Exception as e:
         automation_manager.log(f"[YouTube] Upload/schedule failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

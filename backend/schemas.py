@@ -113,7 +113,7 @@ class ScheduleSlotRecord(BaseModel):
     script_title: str
     youtube_video_id: Optional[str] = None
     youtube_url: Optional[str] = None
-    privacy_status: Literal["pending_upload", "unlisted", "public", "private", "failed"] = "pending_upload"
+    privacy_status: Literal["pending_upload", "scheduled", "unlisted", "public", "private", "failed"] = "pending_upload"
     processing_status: str = "unknown"
     created_at: str = ""
     published_at: Optional[str] = None

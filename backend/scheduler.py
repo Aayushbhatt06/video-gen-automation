@@ -107,7 +107,7 @@ def preview_upcoming_free_slots(count: int = 12) -> List[Dict]:
     occupied_isos = {
         s.slot_iso
         for s in existing
-        if s.privacy_status in {"pending_upload", "unlisted", "public", "private"}
+        if s.privacy_status in {"pending_upload", "scheduled", "unlisted", "public", "private"}
     }
 
     upcoming: List[Dict] = []
@@ -187,7 +187,7 @@ def allocate_next_slot(script_id: str, script_title: str) -> Optional[ScheduleSl
 def update_slot_after_upload(
     slot_id: str,
     youtube_video_id: str,
-    privacy_status: str = "unlisted",
+    privacy_status: str = "scheduled",
     processing_status: str = "processing",
 ) -> Optional[ScheduleSlotRecord]:
     slots = load_schedule_slots()

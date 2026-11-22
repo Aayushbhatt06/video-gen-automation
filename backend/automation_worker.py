@@ -26,7 +26,7 @@ from backend.video_composer import render_short_project
 from backend.youtube_uploader import (
     get_youtube_auth_status,
     promote_unlisted_video_to_public,
-    upload_short_as_unlisted,
+    upload_short_scheduled,
 )
 
 
@@ -273,21 +273,24 @@ class AutomationManager:
             self.phase = "uploading_youtube"
             self.log(
                 f"[Automation] Reserved slot {slot.slot_local_display}. "
-                f"Uploading as UNLISTED first for HD processing..."
+                f"Uploading & scheduling native YouTube publishAt..."
             )
             try:
-                upload_res = upload_short_as_unlisted(script, log_fn=self.log)
+                upload_res = upload_short_scheduled(
+                    script,
+                    publish_at_iso=slot.slot_iso,
+                    log_fn=self.log,
+                )
                 vid_id = upload_res["video_id"]
-                actual_priv = upload_res.get("privacy_status", "unlisted")
 
                 update_slot_after_upload(
                     slot_id=slot.slot_id,
                     youtube_video_id=vid_id,
-                    privacy_status=actual_priv,
+                    privacy_status="scheduled",
                     processing_status="processing",
                 )
                 script.youtube_video_id = vid_id
-                script.youtube_privacy = actual_priv
+                script.youtube_privacy = "scheduled"
                 script.scheduled_slot_iso = slot.slot_iso
                 script.scheduled_slot_display = slot.slot_local_display
                 script.status = "scheduled_public"
@@ -296,8 +299,8 @@ class AutomationManager:
                 self.cycles_completed += 1
                 self._save_persisted_state()
                 self.log(
-                    f"[Automation] SUCCESS: '{script.youtube_meta.title}' uploaded as {actual_priv.upper()} "
-                    f"(ID: {vid_id}) and scheduled to flip PUBLIC at {slot.slot_local_display}!"
+                    f"[Automation] SUCCESS: '{script.youtube_meta.title}' scheduled on YouTube "
+                    f"(ID: {vid_id}) to go PUBLIC at {slot.slot_local_display}!"
                 )
                 return True
             except Exception as up_err:

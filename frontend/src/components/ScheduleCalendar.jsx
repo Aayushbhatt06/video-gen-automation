@@ -29,10 +29,10 @@ export default function ScheduleCalendar({
         <div className="space-y-1">
           <h2 className="text-sm font-bold text-white flex items-center gap-2">
             <Calendar className="w-4 h-4 text-indigo-400" />
-            Multi-Day YouTube Shorts Schedule Board (Unlisted Processing &rarr; Public Slot)
+            Multi-Day YouTube Shorts Schedule Board (Native publishAt)
           </h2>
           <p className="text-xs text-slate-400">
-            Every Short uploads as <strong className="text-amber-300">Unlisted</strong> first so YouTube completes HD &amp; Shorts checks, then automatically flips to <strong className="text-emerald-300">Public</strong> on your daily slots:{" "}
+            Every Short uploads directly with YouTube&apos;s native <code className="text-indigo-300">publishAt</code> schedule — YouTube processes HD immediately upon upload and flips it <strong className="text-emerald-300">Public</strong> on your daily slots:{" "}
             <code className="text-indigo-300">
               {(config.daily_slots || ["12:00", "15:00", "18:00", "21:00"]).join(" · ")}
             </code>{" "}
@@ -85,8 +85,8 @@ export default function ScheduleCalendar({
                           </>
                         ) : (
                           <>
-                            <Lock className="w-3 h-3" />
-                            UNLISTED ({slot.processing_status || "processing"})
+                            <Clock className="w-3 h-3" />
+                            SCHEDULED ({slot.processing_status || "processing"})
                           </>
                         )}
                       </span>

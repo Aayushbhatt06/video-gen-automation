@@ -126,14 +126,27 @@ def get_authenticated_youtube_service(interactive: bool = False):
     return build("youtube", "v3", credentials=creds, cache_discovery=False)
 
 
-def upload_short_as_unlisted(
+def _to_utc_rfc3339(local_iso: str) -> str:
+    """Convert an ISO-8601 timestamp with timezone offset to UTC RFC3339 (`YYYY-MM-DDTHH:MM:SSZ`)."""
+    from datetime import datetime, timezone
+
+    dt = datetime.fromisoformat(local_iso)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    dt_utc = dt.astimezone(timezone.utc)
+    return dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def upload_short_scheduled(
     script: ScriptSchema,
+    publish_at_iso: str,
     log_fn: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     """
-    Stage 1 of Two-Stage Deployment:
-    Upload the rendered Short to the user's YouTube channel with `privacyStatus = "unlisted"`.
-    This allows YouTube to finish SD/HD transcoding and Shorts processing before the scheduled public slot.
+    Upload the rendered Short directly to the user's YouTube channel with native
+    YouTube Data API v3 scheduling (`status.privacyStatus = "private"` + `status.publishAt`).
+    YouTube processes HD & Shorts immediately upon upload and automatically publishes it
+    publicly at `publishAt` without any extra local polling needed.
     """
     from googleapiclient.http import MediaFileUpload
 
@@ -167,6 +180,8 @@ def upload_short_as_unlisted(
         safe_tags.append(clean_tag)
         char_acc += len(clean_tag) + 2
 
+    publish_at_utc = _to_utc_rfc3339(publish_at_iso)
+
     body = {
         "snippet": {
             "title": title,
@@ -177,13 +192,14 @@ def upload_short_as_unlisted(
             "defaultAudioLanguage": "en",
         },
         "status": {
-            "privacyStatus": "unlisted",
+            "privacyStatus": "private",
+            "publishAt": publish_at_utc,
             "selfDeclaredMadeForKids": False,
         },
     }
 
     if log_fn:
-        log_fn(f"[YouTube] Uploading '{title}' as UNLISTED so HD processing can complete...")
+        log_fn(f"[YouTube] Uploading '{title}' with native publishAt={publish_at_utc}...")
 
     media = MediaFileUpload(
         str(script.video_path),
@@ -201,16 +217,18 @@ def upload_short_as_unlisted(
             log_fn(f"[YouTube] Upload progress: {pct}%...")
 
     video_id = response.get("id")
-    actual_privacy = (response.get("status") or {}).get("privacyStatus", "unlisted")
+    actual_privacy = (response.get("status") or {}).get("privacyStatus", "private")
 
     if log_fn:
         log_fn(
-            f"[YouTube] Uploaded video_id={video_id} (privacy={actual_privacy}) -> https://youtube.com/shorts/{video_id}"
+            f"[YouTube] Uploaded & scheduled video_id={video_id} (publishAt={publish_at_utc}) -> https://youtube.com/shorts/{video_id}"
         )
 
     return {
         "video_id": video_id,
-        "privacy_status": actual_privacy,
+        "privacy_status": "scheduled",
+        "raw_privacy": actual_privacy,
+        "publish_at_utc": publish_at_utc,
         "url": f"https://youtube.com/shorts/{video_id}",
     }
 

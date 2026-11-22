@@ -15,7 +15,7 @@ const STATUS_BADGES = {
   rendering: { label: "Rendering", color: "bg-indigo-500/20 text-indigo-300 border-indigo-500/40" },
   rendered: { label: "Rendered", color: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" },
   ready_to_upload: { label: "Ready for YT", color: "bg-cyan-500/15 text-cyan-300 border-cyan-500/30" },
-  scheduled_public: { label: "Unlisted -> Scheduled", color: "bg-amber-500/15 text-amber-300 border-amber-500/30" },
+  scheduled_public: { label: "Scheduled on YT", color: "bg-amber-500/15 text-amber-300 border-amber-500/30" },
   published: { label: "Public on YT", color: "bg-rose-500/20 text-rose-300 border-rose-500/40" },
   qa_failed: { label: "QA Failed", color: "bg-rose-500/20 text-rose-300 border-rose-500/40" },
   failed: { label: "Failed", color: "bg-rose-500/20 text-rose-300 border-rose-500/40" },
