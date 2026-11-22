@@ -16,24 +16,28 @@ from backend.story_memory import (
 )
 
 STORYTELLING_SYSTEM_PROMPT = """You are an elite viral YouTube Shorts & Reels story architect and voice-acting director.
-You write STRICTLY IN NATURAL, EMOTIONAL, CONVERSATIONAL ENGLISH designed specifically for Alibaba Qwen3-TTS voice synthesis.
+You write STRICTLY IN NORMAL, NATURAL, CONVERSATIONAL ENGLISH designed specifically for steady, consistent Alibaba Qwen3-TTS voice synthesis.
 
 CRITICAL VOICE & PROSODY RULES FOR QWEN3-TTS:
-1. NEVER write like an encyclopedia, Wikipedia article, or robotic narrator. Write like a charismatic late-night storyteller leaning across a table telling a friend an unbelievable story.
-2. Build natural speech rhythm directly into `spoken_text`:
-   - Use everyday contractions ("didn't", "couldn't", "here's", "that's", "wasn't").
-   - Use ellipses (`...`) for suspenseful breath pauses and em-dashes (`—`) for sharp conversational pivots.
-   - Vary sentence length: follow a tense 10-word buildup with a 3-word gut-punch ("And it worked.", "Nobody noticed.", "Except one person.").
-   - Spell out numbers and symbols naturally as spoken English ("three hundred thousand dollars" instead of "$300k").
-3. Every beat MUST include a vivid, high-energy `emotion_instruct` field tailored for Qwen3-TTS (`instruct` parameter) — NEVER ask for slow, sleepy, quiet, or monotone delivery:
-   - Beat 1 (Hook, 0-2s): Fast, punchy, high-energy vocal projection (e.g., "Speak quickly with urgent excitement and bold vocal power, hooking the listener immediately").
-   - Middle Beats (Escalation): Brisk, animated disbelief, rising intensity, or sharp curiosity (e.g., "Speak energetically with rising intensity and shocked disbelief, emphasizing the twist").
-   - Climax / Twist Beat: Explosive, dramatic reveal with strong vocal weight (e.g., "Speak with stunned, powerful realization and sharp dramatic punch").
-   - Final Beat (Seamless Loop): Crisp, confident, high-retention closing cadence that flows straight back into Beat 1.
+1. NEVER write like an encyclopedia, Wikipedia article, or robotic narrator. Write like a sharp, charismatic friend telling an unbelievable story out loud.
+2. Keep `spoken_text` clean and steady so TTS speed NEVER fluctuates wildly:
+   - Use normal, everyday conversational English with natural contractions ("didn't", "couldn't", "here's", "that's", "wasn't").
+   - Use ONLY standard full stops (.) and commas (,) for punctuation (plus ? or ! when genuinely needed).
+   - STRICTLY FORBIDDEN: Do NOT add unnecessary pauses, ellipses (...), em-dashes (—), or bracketed stage directions. Those cause TTS to stall and vary speed unpredictably.
+   - Keep sentence flow smooth and direct, and spell out numbers naturally as spoken English ("three hundred thousand dollars" instead of "$300k").
+3. Every beat MUST include a steady, high-energy `emotion_instruct` field tailored for Qwen3-TTS (`instruct` parameter):
+   - Keep pacing consistent and brisk across ALL beats so speed doesn't drop or swing between beats.
+   - Beat 1 (Hook, 0-2s): "Speak at a steady, brisk conversational pace with confident energy and curiosity."
+   - Middle Beats (Escalation): "Speak at a steady, engaging pace with rising tension, disbelief, or dry dark humor."
+   - Climax / Twist Beat: "Speak at a steady, punchy pace with sharp realization and strong vocal conviction."
+   - Final Beat (Seamless Loop): "Speak at a steady, confident pace with a wry or ominous closing tone."
+
+CONTENT & TONE RULES:
+- Do NOT restrict stories to overly sanitized or family-friendly PG language. Feel free to include gritty realism, eerie twists, moral ambiguity, and dark humor whenever it makes the story sharper and more entertaining.
 
 STORY & RETENTION RULES:
 - 0-2 Second Hook: Beat 1 MUST open in the middle of the tension or with a bizarre, specific claim. FORBIDDEN openings: "Did you know", "Imagine this", "Welcome back", "Today we're talking about", "In a world where".
-- Target Total Length: 95 to 135 spoken words across 9 to 13 punchy beats (~32 to 48 seconds total). Each beat should be 1-2 short spoken sentences (7-14 words).
+- Target Total Length: 95 to 135 spoken words across 9 to 13 punchy beats (~32 to 48 seconds total). Each beat should be 1-2 clean spoken sentences (7-14 words).
 - Seamless Loop: The final words of the last beat should grammatically or thematically connect right back into Beat 1.
 - Full YouTube Shorts Packaging (`youtube_meta`):
   - `title`: Hook-driven Shorts title (<= 95 chars, includes `#Shorts` at the end).
@@ -43,6 +47,14 @@ STORY & RETENTION RULES:
   - `category_id`: `"24"` (Entertainment) or `"20"` (Gaming).
   - `thumbnail_text`: 2-4 uppercase punchy cover words.
 """
+
+
+def _clean_spoken_text_for_tts(text: str) -> str:
+    """Remove ellipses and em-dashes that cause Qwen3-TTS to stall or vary speed."""
+    cleaned = text.replace("...", ".").replace("…", ".").replace("—", ", ").replace("–", ", ")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    cleaned = re.sub(r"\.\s*\.", ".", cleaned)
+    return cleaned
 
 
 def _extract_json_object(raw_text: str) -> Dict[str, Any]:
@@ -211,8 +223,8 @@ Return ONLY a valid JSON object matching this exact schema:
       "beat_id": 1,
       "speaker_role": "narrator",
       "voice_gender": "{voice_gender}",
-      "emotion_instruct": "Speak with urgent curiosity and a hushed, leaning-in storytelling tone",
-      "spoken_text": "Natural conversational English line with ... pause or — pivot for realistic Qwen3-TTS inflection.",
+      "emotion_instruct": "Speak at a steady, brisk conversational pace with confident energy and curiosity.",
+      "spoken_text": "Normal conversational English line using only full stops and commas, with no ellipses or artificial pauses.",
       "sfx_cue": "whoosh"
     }}
   ]
@@ -221,8 +233,8 @@ Return ONLY a valid JSON object matching this exact schema:
 Requirements Checklist:
 - 9 to 13 beats total, 95-135 spoken words total (~32-48 seconds).
 - `sfx_cue` must be one of: "none", "pop", "whoosh", "ding", "vine_boom" (use SFX sparingly on 2-4 key beats).
-- Every beat MUST have a specific, expressive `emotion_instruct` guiding Qwen3-TTS vocal emotion and pacing.
-- `spoken_text` MUST sound like a real human telling a gripping story aloud—contractions, pauses (`...`), dynamic emotional arc.
+- Every beat MUST use normal conversational English with ONLY standard full stops (.) and commas (,). Do NOT use `...` or `—`.
+- Do NOT restrict to family-friendly PG content; dark humor and edgy twists are welcome when appropriate.
 """
         raw_data, used_provider, used_model = call_llm_json(
             STORYTELLING_SYSTEM_PROMPT,
@@ -256,7 +268,7 @@ Requirements Checklist:
     allowed_sfx = {"none", "pop", "whoosh", "ding", "vine_boom"}
 
     for idx, b in enumerate(raw_beats, start=1):
-        spoken = str(b.get("spoken_text") or "").strip()
+        spoken = _clean_spoken_text_for_tts(str(b.get("spoken_text") or ""))
         if not spoken:
             continue
         sfx = str(b.get("sfx_cue") or "none").lower().strip()
@@ -378,7 +390,7 @@ Return ONLY valid JSON:
 }}"""
 
     data, _, _ = call_llm_json(STORYTELLING_SYSTEM_PROMPT, user_prompt, provider=provider, model=model)
-    new_spoken = str(data.get("spoken_text") or target.spoken_text).strip()
+    new_spoken = _clean_spoken_text_for_tts(str(data.get("spoken_text") or target.spoken_text))
     new_instruct = str(data.get("emotion_instruct") or target.emotion_instruct).strip()
 
     target.spoken_text = new_spoken
