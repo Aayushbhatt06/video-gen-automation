@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     DEFAULT_LLM_PROVIDER: str = "groq"
     DEFAULT_GROQ_MODEL: str = "openai/gpt-oss-120b"
-    DEFAULT_GEMINI_MODEL: str = "gemini-3.8-flash"
+    DEFAULT_GEMINI_MODEL: str = "gemini-3.6-flash"
 
     # TTS Engine
     DEFAULT_TTS_ENGINE: str = "qwen3"

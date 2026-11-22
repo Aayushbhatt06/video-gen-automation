@@ -111,11 +111,11 @@ def _call_gemini_json(system_prompt: str, user_prompt: str, model: Optional[str]
 
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
     primary = model or settings.DEFAULT_GEMINI_MODEL
-    if primary == "gemini-2.5-flash":
-        primary = "gemini-3.8-flash"
+    if primary in {"gemini-2.5-flash", "gemini-3.8-flash"}:
+        primary = "gemini-3.6-flash"
 
     candidates = []
-    for m in [primary, "gemini-3.8-flash", "gemini-3.8-pro", "gemini-2.5-flash"]:
+    for m in [primary, "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite"]:
         if m and m not in candidates:
             candidates.append(m)
 

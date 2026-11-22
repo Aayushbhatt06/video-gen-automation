@@ -400,6 +400,7 @@ export default function SettingsModal({
                 </label>
                 <input
                   type="password"
+                  autoComplete="new-password"
                   value={groqKey}
                   onChange={(e) => setGroqKey(e.target.value)}
                   placeholder="gsk_... (leave blank to keep current)"
@@ -413,6 +414,7 @@ export default function SettingsModal({
                 </label>
                 <input
                   type="password"
+                  autoComplete="new-password"
                   value={geminiKey}
                   onChange={(e) => setGeminiKey(e.target.value)}
                   placeholder="AIza... (leave blank to keep current)"

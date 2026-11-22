@@ -587,16 +587,16 @@ def api_automation_run_once():
 def api_update_settings(req: AutomationConfigUpdate):
     updates = req.model_dump(exclude_none=True)
 
-    # Update API keys in .env and runtime settings if provided
+    # Update API keys in .env and runtime settings if provided (ignore browser autofill garbage)
     env_file = ROOT_DIR / ".env"
     if "groq_api_key" in updates:
         key_val = updates.pop("groq_api_key").strip()
-        if key_val:
+        if key_val and key_val.startswith("gsk_"):
             settings.GROQ_API_KEY = key_val
             _upsert_env_var(env_file, "GROQ_API_KEY", key_val)
     if "gemini_api_key" in updates:
         key_val = updates.pop("gemini_api_key").strip()
-        if key_val:
+        if key_val and (key_val.startswith("AIza") or key_val.startswith("AQ.")):
             settings.GEMINI_API_KEY = key_val
             _upsert_env_var(env_file, "GEMINI_API_KEY", key_val)
 
