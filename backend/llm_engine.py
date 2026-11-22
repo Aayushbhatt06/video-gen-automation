@@ -57,28 +57,40 @@ def _extract_json_object(raw_text: str) -> Dict[str, Any]:
     return json.loads(text)
 
 
-def _call_groq_json(system_prompt: str, user_prompt: str, model: Optional[str] = None) -> Dict[str, Any]:
+def _call_groq_json(system_prompt: str, user_prompt: str, model: Optional[str] = None) -> tuple[Dict[str, Any], str]:
     from groq import Groq
 
     if not settings.GROQ_API_KEY or settings.GROQ_API_KEY == "your_groq_api_key_here":
         raise RuntimeError("GROQ_API_KEY is not configured in .env")
 
     client = Groq(api_key=settings.GROQ_API_KEY)
-    chosen_model = model or settings.DEFAULT_GROQ_MODEL
-    resp = client.chat.completions.create(
-        model=chosen_model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.88,
-        response_format={"type": "json_object"},
-    )
-    content = resp.choices[0].message.content or "{}"
-    return _extract_json_object(content)
+    primary = model or settings.DEFAULT_GROQ_MODEL
+    candidates = []
+    for m in [primary, "openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"]:
+        if m and m not in candidates:
+            candidates.append(m)
+
+    last_err: Optional[Exception] = None
+    for candidate_model in candidates:
+        try:
+            resp = client.chat.completions.create(
+                model=candidate_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.88,
+                response_format={"type": "json_object"},
+            )
+            content = resp.choices[0].message.content or "{}"
+            return _extract_json_object(content), candidate_model
+        except Exception as e:
+            last_err = e
+            continue
+    raise RuntimeError(f"Groq models {candidates} failed: {last_err}")
 
 
-def _call_gemini_json(system_prompt: str, user_prompt: str, model: Optional[str] = None) -> Dict[str, Any]:
+def _call_gemini_json(system_prompt: str, user_prompt: str, model: Optional[str] = None) -> tuple[Dict[str, Any], str]:
     from google import genai
     from google.genai import types
 
@@ -86,16 +98,31 @@ def _call_gemini_json(system_prompt: str, user_prompt: str, model: Optional[str]
         raise RuntimeError("GEMINI_API_KEY is not configured in .env")
 
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
-    chosen_model = model or settings.DEFAULT_GEMINI_MODEL
-    resp = client.models.generate_content(
-        model=chosen_model,
-        contents=f"{system_prompt}\n\n{user_prompt}",
-        config=types.GenerateContentConfig(
-            temperature=0.88,
-            response_mime_type="application/json",
-        ),
-    )
-    return _extract_json_object(resp.text or "{}")
+    primary = model or settings.DEFAULT_GEMINI_MODEL
+    if primary == "gemini-2.5-flash":
+        primary = "gemini-3.8-flash"
+
+    candidates = []
+    for m in [primary, "gemini-3.8-flash", "gemini-3.8-pro", "gemini-2.5-flash"]:
+        if m and m not in candidates:
+            candidates.append(m)
+
+    last_err: Optional[Exception] = None
+    for candidate_model in candidates:
+        try:
+            resp = client.models.generate_content(
+                model=candidate_model,
+                contents=f"{system_prompt}\n\n{user_prompt}",
+                config=types.GenerateContentConfig(
+                    temperature=0.88,
+                    response_mime_type="application/json",
+                ),
+            )
+            return _extract_json_object(resp.text or "{}"), candidate_model
+        except Exception as e:
+            last_err = e
+            continue
+    raise RuntimeError(f"Gemini models {candidates} failed: {last_err}")
 
 
 def call_llm_json(
@@ -105,28 +132,28 @@ def call_llm_json(
     model: Optional[str] = None,
 ) -> tuple[Dict[str, Any], str, str]:
     """
-    Call preferred LLM provider with automatic fallback to secondary provider if configured.
+    Call preferred LLM provider with automatic model & provider fallback.
     Returns (parsed_json, active_provider, active_model).
     """
     pref = (provider or settings.DEFAULT_LLM_PROVIDER or "groq").lower()
     order = ["groq", "gemini"] if pref == "groq" else ["gemini", "groq"]
 
-    last_err: Optional[Exception] = None
+    errors: List[str] = []
     for prov in order:
         try:
             if prov == "groq":
                 m = model if (provider == "groq" and model) else settings.DEFAULT_GROQ_MODEL
-                data = _call_groq_json(system_prompt, user_prompt, m)
-                return data, "groq", m
+                data, active_m = _call_groq_json(system_prompt, user_prompt, m)
+                return data, "groq", active_m
             else:
                 m = model if (provider == "gemini" and model) else settings.DEFAULT_GEMINI_MODEL
-                data = _call_gemini_json(system_prompt, user_prompt, m)
-                return data, "gemini", m
+                data, active_m = _call_gemini_json(system_prompt, user_prompt, m)
+                return data, "gemini", active_m
         except Exception as e:
-            last_err = e
+            errors.append(f"[{prov}] {e}")
             continue
 
-    raise RuntimeError(f"All configured LLM providers failed. Last error: {last_err}")
+    raise RuntimeError("All configured LLM providers failed: " + " | ".join(errors))
 
 
 def generate_story_script(

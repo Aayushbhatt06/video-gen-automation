@@ -43,7 +43,7 @@ class ScriptSchema(BaseModel):
     seed_angle: str = Field(default="", description="Assigned seed angle used during generation")
     preset: str = Field(default="Reddit / Storytime Twist")
     provider: str = Field(default="groq")
-    model: str = Field(default="llama-3.3-70b-versatile")
+    model: str = Field(default="openai/gpt-oss-120b")
     language: Literal["en"] = Field(default="en")
     tts_engine: Literal["qwen3", "edge"] = Field(default="qwen3")
     background_clip: str = Field(default="random")

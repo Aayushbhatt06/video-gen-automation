@@ -10,6 +10,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 ROOT_DIR = Path(__file__).resolve().parent.parent
 V1_SIBLING_DIR = ROOT_DIR.parent / "automatic-YT"
 
+# Ensure .env is synced from sibling v1 before Settings() loads
+_LOCAL_ENV = ROOT_DIR / ".env"
+_V1_ENV = V1_SIBLING_DIR / ".env"
+if not _LOCAL_ENV.exists() and _V1_ENV.exists():
+    try:
+        _LOCAL_ENV.write_bytes(_V1_ENV.read_bytes())
+    except Exception:
+        pass
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -22,8 +31,8 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     GEMINI_API_KEY: str = ""
     DEFAULT_LLM_PROVIDER: str = "groq"
-    DEFAULT_GROQ_MODEL: str = "llama-3.3-70b-versatile"
-    DEFAULT_GEMINI_MODEL: str = "gemini-2.5-flash"
+    DEFAULT_GROQ_MODEL: str = "openai/gpt-oss-120b"
+    DEFAULT_GEMINI_MODEL: str = "gemini-3.8-flash"
 
     # TTS Engine
     DEFAULT_TTS_ENGINE: str = "qwen3"

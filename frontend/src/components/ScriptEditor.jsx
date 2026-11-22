@@ -102,8 +102,8 @@ export default function ScriptEditor({
                   onChange={(e) => setProvider(e.target.value)}
                   className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200"
                 >
-                  <option value="groq">Groq (Llama 3.3 70B)</option>
-                  <option value="gemini">Google Gemini 2.5</option>
+                  <option value="groq">Groq (Llama 3.3 70B / GPT-OSS)</option>
+                  <option value="gemini">Google Gemini 3.8 Flash</option>
                 </select>
 
                 <select
