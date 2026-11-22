@@ -204,7 +204,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Hormozi,Arial Black,104,&H00FFFFFF,&H0000FFFF,&H00000000,&H99000000,-1,0,0,0,100,100,2,0,1,11,6,2,60,60,500,1
+Style: Hormozi,Arial Black,108,&H00FFFFFF,&H0000FFFF,&H00000000,&H99000000,-1,0,0,0,108,104,1.5,0,1,6,4,2,60,60,500,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -244,9 +244,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             styled_tokens: List[str] = []
             for token_idx, token in enumerate(chunk):
                 if token_idx == active_idx:
-                    styled_tokens.append(r"{\c&H0000FFFF&\fscx112\fscy112}" + token.word + r"{\c&H00FFFFFF&\fscx100\fscy100}")
+                    styled_tokens.append(r"{\b1\c&H0000FFFF&\fscx114\fscy114}" + token.word + r"{\b1\c&H00FFFFFF&\fscx108\fscy104}")
                 else:
-                    styled_tokens.append(r"{\c&H00FFFFFF&}" + token.word)
+                    styled_tokens.append(r"{\b1\c&H00FFFFFF&}" + token.word)
 
             line_text = r"{\an2}" + " ".join(styled_tokens)
             dialogue_lines.append(
