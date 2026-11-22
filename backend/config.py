@@ -36,6 +36,7 @@ class Settings(BaseSettings):
 
     # TTS Engine
     DEFAULT_TTS_ENGINE: str = "qwen3"
+    DEFAULT_VOICE: str = "builtin:male"
     EDGE_TTS_VOICE_MALE: str = "en-US-ChristopherNeural"
     EDGE_TTS_VOICE_FEMALE: str = "en-US-AvaNeural"
 
@@ -67,6 +68,7 @@ settings = Settings()
 CONFIG_DIR = ROOT_DIR / "config"
 ASSETS_DIR = ROOT_DIR / "assets"
 BACKGROUNDS_DIR = ASSETS_DIR / "backgrounds"
+VOICES_DIR = ASSETS_DIR / "voices"
 MUSIC_DIR = ASSETS_DIR / "music"
 SFX_DIR = ASSETS_DIR / "sfx"
 MODELS_DIR = ROOT_DIR / "models"
@@ -80,9 +82,11 @@ TEMP_DIR = OUTPUT_DIR / "temp"
 for _d in (
     CONFIG_DIR,
     BACKGROUNDS_DIR,
+    VOICES_DIR,
     MUSIC_DIR,
     SFX_DIR,
     MODELS_DIR / "qwen3-tts-0.6b",
+    MODELS_DIR / "qwen3-tts-0.6b-base",
     MODELS_DIR / "whisper",
     DATA_DIR,
     SCRIPTS_DIR,
@@ -103,7 +107,7 @@ YOUTUBE_TOKEN_FILE = CONFIG_DIR / "token.json"
 
 
 def get_qwen_model_dir() -> Path:
-    """Resolve local Qwen3-TTS weights, falling back to sibling v1 folder if present."""
+    """Resolve local Qwen3-TTS CustomVoice weights, falling back to sibling v1 folder if present."""
     local_dir = MODELS_DIR / "qwen3-tts-0.6b"
     if (local_dir / "config.json").exists():
         return local_dir
@@ -111,6 +115,11 @@ def get_qwen_model_dir() -> Path:
     if (v1_dir / "config.json").exists():
         return v1_dir
     return local_dir
+
+
+def get_qwen_base_model_dir() -> Path:
+    """Resolve local Qwen3-TTS-12Hz-0.6B-Base weights for zero-shot voice cloning."""
+    return MODELS_DIR / "qwen3-tts-0.6b-base"
 
 
 def get_whisper_model_dir() -> Path:

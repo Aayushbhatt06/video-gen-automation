@@ -21,6 +21,7 @@ export default function App() {
   const [scripts, setScripts] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [backgrounds, setBackgrounds] = useState([]);
+  const [voicesData, setVoicesData] = useState(null);
   const [scheduleData, setScheduleData] = useState(null);
   const [activeTab, setActiveTab] = useState("studio"); // "studio" | "schedule"
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -39,16 +40,18 @@ export default function App() {
 
   const refreshAll = async () => {
     try {
-      const [h, scList, bgRes, schedRes] = await Promise.all([
+      const [h, scList, bgRes, schedRes, vRes] = await Promise.all([
         api.getHealth(),
         api.listScripts(),
         api.listBackgrounds(),
         api.getSchedule(),
+        api.listVoices(),
       ]);
       setHealth(h);
       setScripts(scList);
       setBackgrounds(bgRes.clips || []);
       setScheduleData(schedRes);
+      setVoicesData(vRes);
 
       if (!selectedId && scList.length > 0) {
         setSelectedId(scList[0].id);
@@ -362,6 +365,7 @@ export default function App() {
           script={selectedScript}
           automation={health?.automation}
           backgrounds={backgrounds}
+          voices={voicesData?.voices || []}
           onUpdateScript={handleSaveScript}
           onUploadBackground={async (file) => {
             await api.uploadBackground(file);
@@ -383,6 +387,7 @@ export default function App() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         health={health}
+        voicesData={voicesData}
         onSaveSettings={async (payload) => {
           await api.updateSettings(payload);
           await refreshAll();
@@ -402,6 +407,26 @@ export default function App() {
           await api.disconnectYoutube();
           await refreshAll();
           showToast("Disconnected YouTube OAuth token", "info");
+        }}
+        onUploadVoice={async (file, name, transcript, setAsDefault) => {
+          await api.uploadVoice(file, name, transcript, setAsDefault);
+          await refreshAll();
+          showToast(`Uploaded & cloned voice "${name || file.name}"!`, "success");
+        }}
+        onSetDefaultVoice={async (voiceId) => {
+          await api.setDefaultVoice(voiceId);
+          await refreshAll();
+          showToast("Updated default narrator voice!", "success");
+        }}
+        onDeleteVoice={async (filename) => {
+          await api.deleteVoice(filename);
+          await refreshAll();
+          showToast("Deleted custom voice sample", "info");
+        }}
+        onDownloadBaseModel={async () => {
+          const res = await api.downloadBaseVoiceModel();
+          showToast(res.message || "Base model download started", "info");
+          await refreshAll();
         }}
       />
     </div>

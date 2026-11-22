@@ -408,6 +408,7 @@ class AutomationManager:
                         preset=preset,
                         provider=cfg.get("default_provider"),
                         tts_engine=cfg.get("default_tts_engine", "qwen3"),
+                        voice_profile=cfg.get("default_voice", "builtin:male"),
                     )
                     self.current_script_id = script.id
                     self.current_script_title = script.title

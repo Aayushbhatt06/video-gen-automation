@@ -1,18 +1,27 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import subprocess
 import wave
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional
 
 import numpy as np
 
-from backend.config import get_ffmpeg_exe, get_qwen_model_dir, settings
+from backend.config import (
+    VOICES_DIR,
+    get_ffmpeg_exe,
+    get_qwen_base_model_dir,
+    get_qwen_model_dir,
+    settings,
+)
 from backend.schemas import BeatSchema
 
-_QWEN_MODEL = None
-_QWEN_DEVICE = None
+_QWEN_CUSTOM_MODEL = None
+_QWEN_BASE_MODEL = None
+_VOICE_CLONE_PROMPT_CACHE: Dict[str, object] = {}
 
 
 def _get_wav_duration(wav_path: Path) -> float:
@@ -23,7 +32,7 @@ def _get_wav_duration(wav_path: Path) -> float:
 
 
 def _resample_to_44100_pcm16(audio_np: np.ndarray, orig_sr: int, out_path: Path) -> float:
-    """Save numpy float waveform to 44100 Hz mono 16-bit PCM WAV."""
+    """Save numpy float waveform to 44100 Hz mono 16-bit PCM WAV with brisk 1.18x pace & vocal punch."""
     arr = np.asarray(audio_np, dtype=np.float32).squeeze()
     if arr.ndim > 1:
         arr = arr.mean(axis=-1)
@@ -50,7 +59,6 @@ def _resample_to_44100_pcm16(audio_np: np.ndarray, orig_sr: int, out_path: Path)
         wf.setframerate(target_sr)
         wf.writeframes(pcm16.tobytes())
 
-    # Apply 1.18x brisk storytelling pace + broadcast vocal compression & clarity EQ
     ffmpeg_exe = get_ffmpeg_exe()
     af_chain = (
         "atempo=1.18,"
@@ -90,14 +98,27 @@ def _resample_to_44100_pcm16(audio_np: np.ndarray, orig_sr: int, out_path: Path)
     return _get_wav_duration(out_path)
 
 
-def _load_qwen_model(log_fn: Optional[Callable[[str], None]] = None):
-    """
-    Lazy-load Alibaba Qwen3-TTS (0.6B-CustomVoice) on CUDA using torch.bfloat16.
-    NEVER use torch.float16 on RTX 4050 (avoids TensorCompare.cu assertion failures).
-    """
-    global _QWEN_MODEL, _QWEN_DEVICE
-    if _QWEN_MODEL is not None:
-        return _QWEN_MODEL
+def is_qwen_base_model_ready() -> bool:
+    return (get_qwen_base_model_dir() / "config.json").exists()
+
+
+def download_qwen_base_model(log_fn: Optional[Callable[[str], None]] = None) -> Path:
+    base_dir = get_qwen_base_model_dir()
+    if (base_dir / "config.json").exists():
+        return base_dir
+    os.environ["HF_HUB_DISABLE_XET"] = "1"
+    from huggingface_hub import snapshot_download
+
+    if log_fn:
+        log_fn("[TTS] Downloading Qwen/Qwen3-TTS-12Hz-0.6B-Base for voice cloning...")
+    snapshot_download("Qwen/Qwen3-TTS-12Hz-0.6B-Base", local_dir=str(base_dir))
+    return base_dir
+
+
+def _load_qwen_custom_model(log_fn: Optional[Callable[[str], None]] = None):
+    global _QWEN_CUSTOM_MODEL
+    if _QWEN_CUSTOM_MODEL is not None:
+        return _QWEN_CUSTOM_MODEL
 
     import torch
     from qwen_tts import Qwen3TTSModel
@@ -108,21 +129,172 @@ def _load_qwen_model(log_fn: Optional[Callable[[str], None]] = None):
     if torch.cuda.is_available():
         dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
         device_map = "cuda:0"
-        _QWEN_DEVICE = "cuda:0"
     else:
         dtype = torch.float32
         device_map = "cpu"
-        _QWEN_DEVICE = "cpu"
 
     if log_fn:
-        log_fn(f"[TTS] Loading Qwen3-TTS from {model_id} on {device_map} (dtype={dtype})...")
+        log_fn(f"[TTS] Loading Qwen3-TTS CustomVoice from {model_id} on {device_map}...")
 
-    _QWEN_MODEL = Qwen3TTSModel.from_pretrained(
+    _QWEN_CUSTOM_MODEL = Qwen3TTSModel.from_pretrained(
         model_id,
         device_map=device_map,
         dtype=dtype,
     )
-    return _QWEN_MODEL
+    return _QWEN_CUSTOM_MODEL
+
+
+def _load_qwen_base_model(log_fn: Optional[Callable[[str], None]] = None):
+    """
+    Lazy-load Alibaba Qwen3-TTS-12Hz-0.6B-Base on CUDA (bfloat16) for zero-shot voice cloning.
+    """
+    global _QWEN_BASE_MODEL
+    if _QWEN_BASE_MODEL is not None:
+        return _QWEN_BASE_MODEL
+
+    import torch
+    from qwen_tts import Qwen3TTSModel
+
+    base_dir = download_qwen_base_model(log_fn=log_fn)
+
+    if torch.cuda.is_available():
+        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
+        device_map = "cuda:0"
+    else:
+        dtype = torch.float32
+        device_map = "cpu"
+
+    if log_fn:
+        log_fn(f"[TTS] Loading Qwen3-TTS Base (Voice Cloning) from {base_dir} on {device_map}...")
+
+    _QWEN_BASE_MODEL = Qwen3TTSModel.from_pretrained(
+        str(base_dir),
+        device_map=device_map,
+        dtype=dtype,
+    )
+    return _QWEN_BASE_MODEL
+
+
+# ---------------------------------------------------------------------------
+# Voice Library Management (Built-in + Uploaded Cloned Voices)
+# ---------------------------------------------------------------------------
+def list_available_voices(default_voice: str = "builtin:male") -> List[Dict]:
+    voices: List[Dict] = [
+        {
+            "id": "builtin:male",
+            "name": "Ryan (Qwen3 Male Narrator)",
+            "type": "builtin",
+            "gender": "male",
+            "is_default": default_voice == "builtin:male",
+        },
+        {
+            "id": "builtin:female",
+            "name": "Serena (Qwen3 Female Narrator)",
+            "type": "builtin",
+            "gender": "female",
+            "is_default": default_voice == "builtin:female",
+        },
+    ]
+
+    for wav_path in sorted(VOICES_DIR.glob("*.wav")):
+        meta_file = wav_path.with_suffix(".json")
+        meta = {}
+        if meta_file.exists():
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+            except Exception:
+                meta = {}
+        voice_id = f"clone:{wav_path.name}"
+        voices.append(
+            {
+                "id": voice_id,
+                "filename": wav_path.name,
+                "name": meta.get("display_name") or wav_path.stem.replace("_", " ").title(),
+                "type": "cloned",
+                "duration_sec": meta.get("duration_sec") or _get_wav_duration(wav_path),
+                "transcript": meta.get("transcript", ""),
+                "is_default": default_voice == voice_id,
+                "audio_url": f"/media/voices/{wav_path.name}",
+            }
+        )
+    return voices
+
+
+def save_custom_voice_sample(
+    original_filename: str,
+    raw_bytes: bytes,
+    display_name: str = "",
+    transcript: str = "",
+) -> Dict:
+    """
+    Convert any uploaded audio sample (.wav, .mp3, .m4a, .ogg, .flac) into a clean
+    24kHz mono 16-bit PCM WAV (max 20 seconds) in `assets/voices/` for Qwen3-TTS cloning.
+    """
+    VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    stem = Path(original_filename).stem
+    safe_stem = "".join(c for c in stem if c.isalnum() or c in ("-", "_")).strip("_") or "custom_voice"
+    raw_ext = Path(original_filename).suffix.lower() or ".wav"
+
+    raw_tmp = VOICES_DIR / f"_tmp_{safe_stem}{raw_ext}"
+    out_wav = VOICES_DIR / f"{safe_stem}.wav"
+    raw_tmp.write_bytes(raw_bytes)
+
+    ffmpeg_exe = get_ffmpeg_exe()
+    try:
+        subprocess.run(
+            [
+                ffmpeg_exe,
+                "-y",
+                "-i",
+                str(raw_tmp),
+                "-t",
+                "20",
+                "-ac",
+                "1",
+                "-ar",
+                "24000",
+                "-af",
+                "highpass=f=70,loudnorm=I=-16:TP=-1.5:LRA=11",
+                "-c:a",
+                "pcm_s16le",
+                str(out_wav),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+    finally:
+        if raw_tmp.exists():
+            raw_tmp.unlink()
+
+    dur = _get_wav_duration(out_wav)
+    meta = {
+        "display_name": display_name.strip() or safe_stem.replace("_", " ").title(),
+        "transcript": transcript.strip(),
+        "duration_sec": dur,
+    }
+    out_wav.with_suffix(".json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    _VOICE_CLONE_PROMPT_CACHE.pop(out_wav.name, None)
+
+    return {
+        "id": f"clone:{out_wav.name}",
+        "filename": out_wav.name,
+        **meta,
+        "audio_url": f"/media/voices/{out_wav.name}",
+    }
+
+
+def delete_custom_voice_sample(filename: str) -> bool:
+    wav_path = VOICES_DIR / filename
+    deleted = False
+    if wav_path.exists():
+        wav_path.unlink()
+        deleted = True
+    json_path = wav_path.with_suffix(".json")
+    if json_path.exists():
+        json_path.unlink()
+    _VOICE_CLONE_PROMPT_CACHE.pop(filename, None)
+    return deleted
 
 
 async def _synthesize_edge_tts_beat(
@@ -165,27 +337,96 @@ def synthesize_beats_audio(
     beats: List[BeatSchema],
     work_dir: Path,
     engine: str = "qwen3",
+    voice_profile: Optional[str] = None,
     log_fn: Optional[Callable[[str], None]] = None,
     progress_fn: Optional[Callable[[int, str], None]] = None,
 ) -> List[Path]:
     """
     Synthesize all English beats into 44.1kHz mono PCM_16 WAV files (`beat_01.wav`, ...).
-    - Primary (`qwen3`): Uses Alibaba Qwen3-TTS (GPU bfloat16) with per-beat `emotion_instruct`
-      for natural, emotional storytelling prosody.
-    - Fallback / Draft (`edge`): Uses English neural Edge-TTS (`en-US-ChristopherNeural` / `en-US-AvaNeural`).
+    Supports:
+    - Cloned Voice (`clone:<filename.wav>`) via Qwen3-TTS-12Hz-0.6B-Base
+    - Built-in Qwen3 CustomVoice (`builtin:male` -> Ryan, `builtin:female` -> Serena)
+    - Fast Draft / Fallback (`edge`) via English Edge-TTS
     """
     work_dir.mkdir(parents=True, exist_ok=True)
     wav_paths: List[Path] = [work_dir / f"beat_{b.beat_id:02d}.wav" for b in beats]
 
-    use_qwen = engine.lower() == "qwen3"
+    active_profile = (voice_profile or "").strip()
+    use_qwen = engine.lower() == "qwen3" or active_profile.startswith("clone:")
+
     if use_qwen:
         try:
-            model = _load_qwen_model(log_fn=log_fn)
             batch_size = 3
+            if active_profile.startswith("clone:"):
+                clone_filename = active_profile.split(":", 1)[1]
+                ref_wav = VOICES_DIR / clone_filename
+                if not ref_wav.exists():
+                    raise FileNotFoundError(f"Cloned voice sample '{clone_filename}' not found in assets/voices/")
+
+                base_model = _load_qwen_base_model(log_fn=log_fn)
+                meta_file = ref_wav.with_suffix(".json")
+                ref_text = ""
+                if meta_file.exists():
+                    try:
+                        ref_text = json.loads(meta_file.read_text(encoding="utf-8")).get("transcript", "").strip()
+                    except Exception:
+                        ref_text = ""
+
+                if clone_filename not in _VOICE_CLONE_PROMPT_CACHE:
+                    if log_fn:
+                        log_fn(f"[TTS] Building Qwen3 voice-clone prompt from '{clone_filename}'...")
+                    prompt_items = base_model.create_voice_clone_prompt(
+                        ref_audio=str(ref_wav),
+                        ref_text=ref_text if ref_text else None,
+                        x_vector_only_mode=(not bool(ref_text)),
+                    )
+                    _VOICE_CLONE_PROMPT_CACHE[clone_filename] = prompt_items
+
+                cached_prompt = _VOICE_CLONE_PROMPT_CACHE[clone_filename]
+                for start_idx in range(0, len(beats), batch_size):
+                    batch = beats[start_idx : start_idx + batch_size]
+                    texts = [b.spoken_text for b in batch]
+                    languages = ["English" for _ in batch]
+
+                    if progress_fn:
+                        total_batches = max(1, (len(beats) + batch_size - 1) // batch_size)
+                        cur_batch = start_idx // batch_size + 1
+                        pct = 10 + int((cur_batch - 1) / total_batches * 35)
+                        progress_fn(pct, f"Cloning voice '{clone_filename}' batch {cur_batch}/{total_batches}...")
+                    if log_fn:
+                        log_fn(
+                            f"[TTS] Qwen3 Voice Clone '{clone_filename}' batch {start_idx // batch_size + 1} "
+                            f"(beats {batch[0].beat_id}-{batch[-1].beat_id})..."
+                        )
+
+                    wavs, sr = base_model.generate_voice_clone(
+                        text=texts,
+                        language=languages,
+                        voice_clone_prompt=cached_prompt,
+                    )
+                    for offset, audio_arr in enumerate(wavs):
+                        beat_obj = batch[offset]
+                        out_wav = wav_paths[start_idx + offset]
+                        dur = _resample_to_44100_pcm16(audio_arr, int(sr), out_wav)
+                        beat_obj.duration_sec = dur
+
+                return wav_paths
+
+            # Built-in Qwen3-TTS CustomVoice
+            model = _load_qwen_custom_model(log_fn=log_fn)
+            forced_gender = None
+            if active_profile == "builtin:male":
+                forced_gender = "male"
+            elif active_profile == "builtin:female":
+                forced_gender = "female"
+
             for start_idx in range(0, len(beats), batch_size):
                 batch = beats[start_idx : start_idx + batch_size]
                 texts = [b.spoken_text for b in batch]
-                speakers = ["Serena" if b.voice_gender == "female" else "Ryan" for b in batch]
+                speakers = [
+                    "Serena" if (forced_gender or b.voice_gender) == "female" else "Ryan"
+                    for b in batch
+                ]
                 languages = ["English" for _ in batch]
                 instructs = [
                     "Deliver at a brisk, energetic, high-conviction pace with strong vocal power and crisp articulation. "
@@ -215,7 +456,6 @@ def synthesize_beats_audio(
                         instruct=instructs,
                     )
                 except TypeError:
-                    # Fallback if specific qwen-tts build doesn't take instruct in batch mode
                     wavs, sr = model.generate_custom_voice(
                         text=texts,
                         language=languages,

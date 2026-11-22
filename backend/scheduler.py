@@ -23,6 +23,7 @@ def get_runtime_schedule_config() -> Dict:
         "default_groq_model": settings.DEFAULT_GROQ_MODEL,
         "default_gemini_model": settings.DEFAULT_GEMINI_MODEL,
         "default_tts_engine": settings.DEFAULT_TTS_ENGINE,
+        "default_voice": settings.DEFAULT_VOICE,
     }
     if RUNTIME_SETTINGS_JSON.exists():
         try:

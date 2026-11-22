@@ -63,6 +63,33 @@ export const api = {
       method: "DELETE",
     }),
 
+  // Voices & Voice Cloning
+  listVoices: () => request("/api/voices"),
+  uploadVoice: (file, displayName = "", transcript = "", setAsDefault = true) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("display_name", displayName);
+    fd.append("transcript", transcript);
+    fd.append("set_as_default", setAsDefault ? "true" : "false");
+    return request("/api/voices/upload", {
+      method: "POST",
+      body: fd,
+    });
+  },
+  setDefaultVoice: (voiceId) =>
+    request("/api/voices/default", {
+      method: "POST",
+      body: JSON.stringify({ voice_id: voiceId }),
+    }),
+  deleteVoice: (filename) =>
+    request(`/api/voices/${encodeURIComponent(filename)}`, {
+      method: "DELETE",
+    }),
+  downloadBaseVoiceModel: () =>
+    request("/api/voices/download-base-model", {
+      method: "POST",
+    }),
+
   // Rendering & Scheduled Upload
   renderScript: (scriptId, payload = {}) =>
     request(`/api/scripts/${scriptId}/render`, {

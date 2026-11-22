@@ -13,6 +13,7 @@ export default function PhonePreview({
   script,
   automation,
   backgrounds,
+  voices,
   onUpdateScript,
   onUploadBackground,
   onRender,
@@ -206,9 +207,14 @@ export default function PhonePreview({
       {/* Background Clip Picker & Uploader */}
       <BackgroundPicker
         backgrounds={backgrounds}
+        voices={voices}
+        selectedVoice={script?.voice_profile || ""}
         selectedClip={script?.background_clip || "random"}
         cropAlign={script?.crop_align || "center"}
         ttsEngine={script?.tts_engine || "qwen3"}
+        onChangeVoice={(voiceId) =>
+          script && onUpdateScript({ ...script, voice_profile: voiceId || null }, true)
+        }
         onChangeClip={(clip) =>
           script && onUpdateScript({ ...script, background_clip: clip }, true)
         }

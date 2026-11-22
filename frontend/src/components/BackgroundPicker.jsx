@@ -3,9 +3,12 @@ import { Upload, Shuffle, Video, Cpu } from "lucide-react";
 
 export default function BackgroundPicker({
   backgrounds,
+  voices,
+  selectedVoice,
   selectedClip,
   cropAlign,
   ttsEngine,
+  onChangeVoice,
   onChangeClip,
   onChangeCrop,
   onChangeTts,
@@ -58,6 +61,19 @@ export default function BackgroundPicker({
             Edge-TTS (Fast Draft)
           </button>
         </div>
+
+        <select
+          value={selectedVoice || ""}
+          onChange={(e) => onChangeVoice(e.target.value)}
+          className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 mt-1.5"
+        >
+          <option value="">Use Studio Default Voice</option>
+          {(voices || []).map((v) => (
+            <option key={v.id} value={v.id}>
+              {v.name} {v.is_default ? "★ (Default)" : ""}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* Gameplay Clip Header & Upload */}

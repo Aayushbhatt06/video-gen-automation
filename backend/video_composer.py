@@ -372,10 +372,13 @@ def render_short_project(
 
     _prog(8, f"Synthesizing English voiceover ({script.tts_engine})...")
     _log(f"[Pipeline] Step 1/5: Synthesizing emotional English voiceover ({script.tts_engine})...")
+    from backend.scheduler import get_runtime_schedule_config
+    default_voice = get_runtime_schedule_config().get("default_voice", "builtin:male")
     beat_wavs = synthesize_beats_audio(
         beats=script.beats,
         work_dir=work_dir,
         engine=script.tts_engine,
+        voice_profile=script.voice_profile or default_voice,
         log_fn=_log,
         progress_fn=progress_fn,
     )

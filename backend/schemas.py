@@ -46,6 +46,10 @@ class ScriptSchema(BaseModel):
     model: str = Field(default="openai/gpt-oss-120b")
     language: Literal["en"] = Field(default="en")
     tts_engine: Literal["qwen3", "edge"] = Field(default="qwen3")
+    voice_profile: Optional[str] = Field(
+        default=None,
+        description="Voice ID: builtin:male, builtin:female, or clone:<filename.wav>",
+    )
     background_clip: str = Field(default="random")
     background_mode: Literal["single", "multi_cut"] = Field(default="single")
     crop_align: Literal["center", "left", "right"] = Field(default="center")
@@ -83,6 +87,7 @@ class GenerateScriptRequest(BaseModel):
     model: Optional[str] = Field(default=None)
     tts_engine: Literal["qwen3", "edge"] = Field(default="qwen3")
     voice_gender: Literal["male", "female"] = Field(default="male")
+    voice_profile: Optional[str] = Field(default=None)
     background_clip: str = Field(default="random")
 
 
@@ -97,6 +102,7 @@ class RewriteBeatRequest(BaseModel):
 
 class RenderRequest(BaseModel):
     tts_engine: Optional[Literal["qwen3", "edge"]] = None
+    voice_profile: Optional[str] = None
     background_clip: Optional[str] = None
     background_mode: Optional[Literal["single", "multi_cut"]] = None
     crop_align: Optional[Literal["center", "left", "right"]] = None
@@ -132,5 +138,6 @@ class AutomationConfigUpdate(BaseModel):
     default_groq_model: Optional[str] = None
     default_gemini_model: Optional[str] = None
     default_tts_engine: Optional[Literal["qwen3", "edge"]] = None
+    default_voice: Optional[str] = None
     groq_api_key: Optional[str] = None
     gemini_api_key: Optional[str] = None

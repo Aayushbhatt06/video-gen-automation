@@ -8,16 +8,24 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
+  Mic,
+  Trash2,
+  Star,
 } from "lucide-react";
 
 export default function SettingsModal({
   open,
   onClose,
   health,
+  voicesData,
   onSaveSettings,
   onUploadClientSecret,
   onConnectYoutube,
   onDisconnectYoutube,
+  onUploadVoice,
+  onSetDefaultVoice,
+  onDeleteVoice,
+  onDownloadBaseModel,
 }) {
   if (!open) return null;
 
@@ -34,7 +42,28 @@ export default function SettingsModal({
   const [geminiKey, setGeminiKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [connectingYt, setConnectingYt] = useState(false);
+  const [voiceName, setVoiceName] = useState("");
+  const [voiceTranscript, setVoiceTranscript] = useState("");
+  const [voiceFile, setVoiceFile] = useState(null);
+  const [uploadingVoice, setUploadingVoice] = useState(false);
   const secretInputRef = useRef(null);
+  const voiceInputRef = useRef(null);
+
+  const voices = voicesData?.voices || [];
+  const baseModelReady = voicesData?.base_clone_model_ready ?? health?.tts?.base_clone_model_ready;
+
+  const handleVoiceSubmit = async () => {
+    if (!voiceFile) return;
+    setUploadingVoice(true);
+    try {
+      await onUploadVoice(voiceFile, voiceName, voiceTranscript, true);
+      setVoiceFile(null);
+      setVoiceName("");
+      setVoiceTranscript("");
+    } finally {
+      setUploadingVoice(false);
+    }
+  };
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -226,6 +255,133 @@ export default function SettingsModal({
                   onChange={(e) => setMaxUploadsPerDay(e.target.value)}
                   className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white"
                 />
+              </div>
+            </div>
+          </div>
+
+          {/* Voice Cloning & Default Voice Selector */}
+          <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs font-bold text-white">
+                <Mic className="w-4 h-4 text-purple-400" />
+                <span>Qwen3 Voice Cloning &amp; Default Narrator</span>
+              </div>
+              {baseModelReady ? (
+                <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                  0.6B-Base Ready ✓
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onDownloadBaseModel}
+                  className="text-[11px] font-semibold text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2.5 py-0.5 rounded-full hover:bg-amber-500/20"
+                >
+                  Download 0.6B-Base Model
+                </button>
+              )}
+            </div>
+
+            {/* Available Voices List */}
+            <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+              {voices.map((v) => (
+                <div
+                  key={v.id}
+                  className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg border text-xs ${
+                    v.is_default
+                      ? "bg-indigo-950/60 border-indigo-500/60 text-white"
+                      : "bg-slate-900/70 border-slate-800 text-slate-300"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Star
+                      className={`w-3.5 h-3.5 shrink-0 ${
+                        v.is_default ? "text-yellow-400 fill-yellow-400" : "text-slate-600"
+                      }`}
+                    />
+                    <span className="font-medium truncate">{v.name}</span>
+                    {v.duration_sec && (
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        ({v.duration_sec}s)
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {v.is_default ? (
+                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300">
+                        Default
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => onSetDefaultVoice(v.id)}
+                        className="px-2.5 py-0.5 rounded bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white text-[11px] font-medium transition"
+                      >
+                        Set Default
+                      </button>
+                    )}
+
+                    {v.type === "cloned" && (
+                      <button
+                        type="button"
+                        onClick={() => onDeleteVoice(v.filename)}
+                        className="p-1 text-slate-500 hover:text-rose-400"
+                        title="Delete cloned voice"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Upload New Voice Sample */}
+            <div className="pt-2 border-t border-slate-800/80 space-y-2">
+              <p className="text-[11px] text-slate-400">
+                Upload a clean 5–15s audio clip (.wav, .mp3, .m4a) to clone any voice with Qwen3-TTS:
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <input
+                  type="text"
+                  value={voiceName}
+                  onChange={(e) => setVoiceName(e.target.value)}
+                  placeholder="Voice Name (e.g. Deep Narrator)"
+                  className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
+                />
+                <div className="flex items-center gap-1.5">
+                  <input
+                    ref={voiceInputRef}
+                    type="file"
+                    accept=".wav,.mp3,.m4a,.ogg,.flac,.aac"
+                    onChange={(e) => setVoiceFile(e.target.files?.[0] || null)}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => voiceInputRef.current?.click()}
+                    className="flex-1 truncate px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs border border-slate-700 text-left"
+                  >
+                    {voiceFile ? voiceFile.name : "Choose 5-15s Audio..."}
+                  </button>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={voiceTranscript}
+                  onChange={(e) => setVoiceTranscript(e.target.value)}
+                  placeholder="Optional exact words spoken in sample (boosts cloning accuracy)"
+                  className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white"
+                />
+                <button
+                  type="button"
+                  onClick={handleVoiceSubmit}
+                  disabled={!voiceFile || uploadingVoice}
+                  className="px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold disabled:opacity-40 transition"
+                >
+                  {uploadingVoice ? "Cloning..." : "Upload & Set Default"}
+                </button>
               </div>
             </div>
           </div>

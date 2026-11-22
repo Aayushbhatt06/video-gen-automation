@@ -175,6 +175,7 @@ def generate_story_script(
     model: Optional[str] = None,
     tts_engine: str = "qwen3",
     voice_gender: str = "male",
+    voice_profile: Optional[str] = None,
     background_clip: str = "random",
     max_dedup_attempts: int = 3,
 ) -> ScriptSchema:
@@ -331,6 +332,7 @@ Requirements Checklist:
         model=used_model,
         language="en",
         tts_engine="qwen3" if tts_engine == "qwen3" else "edge",
+        voice_profile=voice_profile,
         background_clip=background_clip,
         youtube_meta=yt_meta,
         beats=beats,

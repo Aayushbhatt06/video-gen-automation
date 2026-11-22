@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -23,8 +23,16 @@ from backend.config import (
     ROOT_DIR,
     STORY_HISTORY_TXT,
     V1_SIBLING_DIR,
+    VOICES_DIR,
     YOUTUBE_TOKEN_FILE,
     settings,
+)
+from backend.tts_engine import (
+    delete_custom_voice_sample,
+    download_qwen_base_model,
+    is_qwen_base_model_ready,
+    list_available_voices,
+    save_custom_voice_sample,
 )
 from backend.llm_engine import (
     delete_script_file,
@@ -107,6 +115,7 @@ app.add_middleware(
 app.mount("/media/renders", StaticFiles(directory=str(RENDERS_DIR)), name="renders")
 app.mount("/media/backgrounds", StaticFiles(directory=str(BACKGROUNDS_DIR)), name="backgrounds")
 app.mount("/media/bg_cache", StaticFiles(directory=str(BG_CACHE_DIR)), name="bg_cache")
+app.mount("/media/voices", StaticFiles(directory=str(VOICES_DIR)), name="voices")
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +139,8 @@ def get_health():
         },
         "tts": {
             "default_engine": cfg.get("default_tts_engine", settings.DEFAULT_TTS_ENGINE),
+            "default_voice": cfg.get("default_voice", settings.DEFAULT_VOICE),
+            "base_clone_model_ready": is_qwen_base_model_ready(),
         },
         "youtube": yt_status,
         "automation": automation_manager.get_status(),
@@ -157,6 +168,7 @@ def api_get_script(script_id: str):
 @app.post("/api/scripts/generate", response_model=ScriptSchema)
 def api_generate_script(req: GenerateScriptRequest):
     try:
+        cfg = get_runtime_schedule_config()
         automation_manager.log(f"[Studio] Generating English script (Preset: {req.preset})...")
         script = generate_story_script(
             topic=req.topic,
@@ -165,6 +177,7 @@ def api_generate_script(req: GenerateScriptRequest):
             model=req.model,
             tts_engine=req.tts_engine,
             voice_gender=req.voice_gender,
+            voice_profile=req.voice_profile or cfg.get("default_voice", "builtin:male"),
             background_clip=req.background_clip,
         )
         automation_manager.log(f"[Studio] Script generated: '{script.title}' ({len(script.beats)} beats).")
@@ -255,6 +268,95 @@ def api_delete_background(filename: str):
 
 
 # ---------------------------------------------------------------------------
+# Custom Voice Cloning & Default Voice Management
+# ---------------------------------------------------------------------------
+@app.get("/api/voices")
+def api_list_voices():
+    cfg = get_runtime_schedule_config()
+    default_voice = cfg.get("default_voice", settings.DEFAULT_VOICE)
+    return {
+        "default_voice": default_voice,
+        "base_clone_model_ready": is_qwen_base_model_ready(),
+        "voices": list_available_voices(default_voice=default_voice),
+    }
+
+
+@app.post("/api/voices/upload")
+async def api_upload_voice(
+    file: UploadFile = File(...),
+    display_name: str = Form(default=""),
+    transcript: str = Form(default=""),
+    set_as_default: bool = Form(default=True),
+):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing audio filename")
+    ext = Path(file.filename).suffix.lower()
+    if ext not in {".wav", ".mp3", ".m4a", ".ogg", ".flac", ".aac", ".webm"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported audio format {ext}")
+
+    raw_bytes = await file.read()
+    try:
+        voice_info = save_custom_voice_sample(
+            original_filename=file.filename,
+            raw_bytes=raw_bytes,
+            display_name=display_name,
+            transcript=transcript,
+        )
+        if set_as_default:
+            save_runtime_schedule_config({"default_voice": voice_info["id"]})
+        automation_manager.log(
+            f"[Voices] Saved custom voice '{voice_info['name']}' ({voice_info['duration_sec']}s)"
+            + (" and set as DEFAULT." if set_as_default else ".")
+        )
+        cfg = get_runtime_schedule_config()
+        return {
+            "uploaded": voice_info,
+            "default_voice": cfg.get("default_voice", settings.DEFAULT_VOICE),
+            "voices": list_available_voices(cfg.get("default_voice", settings.DEFAULT_VOICE)),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Voice processing failed: {e}")
+
+
+@app.post("/api/voices/default")
+def api_set_default_voice(payload: Dict[str, str]):
+    voice_id = (payload.get("voice_id") or "").strip()
+    if not voice_id:
+        raise HTTPException(status_code=400, detail="voice_id is required")
+    save_runtime_schedule_config({"default_voice": voice_id})
+    automation_manager.log(f"[Voices] Default voice changed to: {voice_id}")
+    return {
+        "default_voice": voice_id,
+        "voices": list_available_voices(default_voice=voice_id),
+    }
+
+
+@app.delete("/api/voices/{filename}")
+def api_delete_voice(filename: str):
+    ok = delete_custom_voice_sample(filename)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Voice sample not found")
+    cfg = get_runtime_schedule_config()
+    cur_def = cfg.get("default_voice", settings.DEFAULT_VOICE)
+    if cur_def == f"clone:{filename}":
+        cur_def = "builtin:male"
+        save_runtime_schedule_config({"default_voice": cur_def})
+    return {
+        "deleted": filename,
+        "default_voice": cur_def,
+        "voices": list_available_voices(default_voice=cur_def),
+    }
+
+
+@app.post("/api/voices/download-base-model")
+def api_download_base_model(background_tasks: BackgroundTasks):
+    if is_qwen_base_model_ready():
+        return {"ready": True, "message": "Qwen3-TTS-12Hz-0.6B-Base is already downloaded."}
+    background_tasks.add_task(download_qwen_base_model, automation_manager.log)
+    return {"ready": False, "started": True, "message": "Downloading Qwen3-TTS-12Hz-0.6B-Base in background..."}
+
+
+# ---------------------------------------------------------------------------
 # Rendering & YouTube Two-Stage Scheduled Upload
 # ---------------------------------------------------------------------------
 @app.post("/api/scripts/{script_id}/render")
@@ -266,6 +368,8 @@ def api_render_script(script_id: str, req: RenderRequest):
 
     if req.tts_engine:
         script.tts_engine = req.tts_engine
+    if req.voice_profile:
+        script.voice_profile = req.voice_profile
     if req.background_clip:
         script.background_clip = req.background_clip
     if req.background_mode:
