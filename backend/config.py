@@ -34,11 +34,14 @@ class Settings(BaseSettings):
     DEFAULT_GROQ_MODEL: str = "openai/gpt-oss-120b"
     DEFAULT_GEMINI_MODEL: str = "gemini-3.6-flash"
 
-    # TTS Engine
+    # TTS Engine & Language
+    DEFAULT_LANGUAGE: str = "en"
     DEFAULT_TTS_ENGINE: str = "qwen3"
     DEFAULT_VOICE: str = "builtin:male"
     EDGE_TTS_VOICE_MALE: str = "en-US-ChristopherNeural"
     EDGE_TTS_VOICE_FEMALE: str = "en-US-AvaNeural"
+    EDGE_TTS_HINDI_MALE: str = "hi-IN-MadhurNeural"
+    EDGE_TTS_HINDI_FEMALE: str = "hi-IN-SwaraNeural"
 
     # Multi-Day Slot Scheduler
     SCHEDULE_TIMEZONE: str = "Asia/Kolkata"

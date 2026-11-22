@@ -378,17 +378,19 @@ def render_short_project(
         beats=script.beats,
         work_dir=work_dir,
         engine=script.tts_engine,
+        language=script.language,
         voice_profile=script.voice_profile or default_voice,
         log_fn=_log,
         progress_fn=progress_fn,
     )
 
-    _prog(48, "Aligning 1:1 word captions (faster-whisper)...")
-    _log("[Pipeline] Step 2/5: Running faster-whisper 1:1 word timestamp alignment...")
+    _prog(48, "Aligning 1:1 English word captions (faster-whisper)...")
+    _log("[Pipeline] Step 2/5: Running faster-whisper word timestamp alignment...")
     word_timings = extract_word_timings_for_beats(
         beats=script.beats,
         beat_wavs=beat_wavs,
         inter_beat_gap_sec=0.07,
+        language=script.language,
         log_fn=_log,
     )
 

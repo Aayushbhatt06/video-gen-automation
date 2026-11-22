@@ -18,6 +18,7 @@ const SFX_OPTIONS = ["none", "whoosh", "pop", "ding", "vine_boom"];
 export default function ScriptEditor({
   script,
   presets,
+  activeLanguage = "en",
   onGenerate,
   onSaveScript,
   onRewriteBeat,
@@ -35,6 +36,7 @@ export default function ScriptEditor({
     await onGenerate({
       topic,
       preset,
+      language: activeLanguage,
       provider,
       voice_gender: voiceGender,
     });
@@ -51,7 +53,9 @@ export default function ScriptEditor({
             </div>
             <div>
               <h2 className="text-base font-bold text-white">
-                Generate Emotional English Story Script
+                {activeLanguage === "hi"
+                  ? "Generate Hindi Voice Story (English Captions & Metadata)"
+                  : "Generate Emotional English Story Script"}
               </h2>
               <p className="text-xs text-slate-400">
                 Automatically deduplicated via <code>story_history.txt</code> with per-beat Qwen3-TTS emotional voice instructions & full YouTube Shorts metadata.
@@ -396,13 +400,40 @@ export default function ScriptEditor({
               />
             </div>
 
-            {/* Spoken English Line (also used 1:1 for Hormozi Captions) */}
-            <textarea
-              rows={2}
-              value={b.spoken_text}
-              onChange={(e) => updateBeatField(idx, "spoken_text", e.target.value)}
-              className="w-full bg-slate-950/90 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-100 leading-relaxed focus:outline-none focus:border-indigo-500"
-            />
+            {/* Spoken Line (Hindi or English) + English Burned Caption when Hindi */}
+            {script.language === "hi" ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase tracking-wider text-amber-300/90 mb-1">
+                    Hindi Voiceover (Spoken)
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={b.spoken_text}
+                    onChange={(e) => updateBeatField(idx, "spoken_text", e.target.value)}
+                    className="w-full bg-slate-950/90 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-100 leading-relaxed focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase tracking-wider text-indigo-300/90 mb-1">
+                    English Burned-In Caption
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={b.en_subtitle || ""}
+                    onChange={(e) => updateBeatField(idx, "en_subtitle", e.target.value)}
+                    className="w-full bg-slate-950/90 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-100 leading-relaxed focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+            ) : (
+              <textarea
+                rows={2}
+                value={b.spoken_text}
+                onChange={(e) => updateBeatField(idx, "spoken_text", e.target.value)}
+                className="w-full bg-slate-950/90 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-100 leading-relaxed focus:outline-none focus:border-indigo-500"
+              />
+            )}
           </div>
         ))}
 

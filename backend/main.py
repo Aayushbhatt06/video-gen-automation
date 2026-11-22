@@ -129,7 +129,7 @@ def get_health():
     yt_status = get_youtube_auth_status()
     return {
         "status": "ok",
-        "language": "en",
+        "language": cfg.get("default_language", settings.DEFAULT_LANGUAGE),
         "providers": {
             "groq_configured": has_groq,
             "gemini_configured": has_gemini,
@@ -169,10 +169,12 @@ def api_get_script(script_id: str):
 def api_generate_script(req: GenerateScriptRequest):
     try:
         cfg = get_runtime_schedule_config()
-        automation_manager.log(f"[Studio] Generating English script (Preset: {req.preset})...")
+        target_lang = req.language or cfg.get("default_language", "en")
+        automation_manager.log(f"[Studio] Generating {target_lang.upper()} script (Preset: {req.preset})...")
         script = generate_story_script(
             topic=req.topic,
             preset=req.preset,
+            language=target_lang,
             provider=req.provider,
             model=req.model,
             tts_engine=req.tts_engine,
@@ -190,7 +192,6 @@ def api_generate_script(req: GenerateScriptRequest):
 @app.put("/api/scripts/{script_id}", response_model=ScriptSchema)
 def api_update_script(script_id: str, updated: ScriptSchema):
     updated.id = script_id
-    updated.language = "en"
     updated.updated_at = datetime.now().isoformat(timespec="seconds")
     save_script(updated)
     return updated

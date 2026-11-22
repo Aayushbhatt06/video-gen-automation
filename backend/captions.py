@@ -95,12 +95,15 @@ def _fallback_proportional_words(text: str, start_offset: float, duration: float
 def extract_word_timings_for_beats(
     beats: List[BeatSchema],
     beat_wavs: List[Path],
-    inter_beat_gap_sec: float = 0.14,
+    inter_beat_gap_sec: float = 0.07,
+    language: str = "en",
     log_fn: Optional[Callable[[str], None]] = None,
 ) -> List[WordTiming]:
     """
-    Run faster-whisper word-timestamp alignment on each beat WAV (using 16kHz NumPy array bypass)
-    and return a global timeline of 1:1 English word timings.
+    Run faster-whisper word-timestamp alignment on each beat WAV (using 16kHz NumPy array bypass).
+    - When `language == "en"`: Locks captions 1:1 to Whisper English word timestamps.
+    - When `language == "hi"`: Maps the beat's strictly English `en_subtitle` words proportionally
+      across Whisper's detected speech-active span of the Hindi voiceover!
     """
     model = None
     try:
@@ -118,15 +121,18 @@ def extract_word_timings_for_beats(
         beat.duration_sec = round(beat_dur, 3)
 
         beat_words: List[WordTiming] = []
+        english_caption_text = (beat.en_subtitle or beat.spoken_text).strip()
+
         if model is not None:
             try:
                 audio_16k = decode_wav_to_16k_float32(wav_path)
                 segments, _ = model.transcribe(
                     audio_16k,
-                    language="en",
+                    language=language,
                     word_timestamps=True,
                     vad_filter=False,
                 )
+                detected_spans: List[tuple[float, float]] = []
                 for seg in segments:
                     for w in getattr(seg, "words", []) or []:
                         clean_w = (w.word or "").strip()
@@ -134,19 +140,30 @@ def extract_word_timings_for_beats(
                             continue
                         w_start = max(0.0, float(w.start))
                         w_end = max(w_start + 0.06, min(beat_dur, float(w.end)))
-                        beat_words.append(
-                            WordTiming(
-                                word=clean_w,
-                                start=round(timeline_cursor + w_start, 3),
-                                end=round(timeline_cursor + w_end, 3),
+                        detected_spans.append((w_start, w_end))
+                        if language == "en":
+                            beat_words.append(
+                                WordTiming(
+                                    word=clean_w,
+                                    start=round(timeline_cursor + w_start, 3),
+                                    end=round(timeline_cursor + w_end, 3),
+                                )
                             )
-                        )
+
+                if language == "hi" and detected_spans:
+                    speech_start = detected_spans[0][0]
+                    speech_end = max(speech_start + 0.25, detected_spans[-1][1])
+                    beat_words = _fallback_proportional_words(
+                        english_caption_text,
+                        timeline_cursor + speech_start,
+                        speech_end - speech_start,
+                    )
             except Exception as e:
                 if log_fn:
                     log_fn(f"[Captions] Whisper beat {beat.beat_id} fallback ({e})")
 
         if not beat_words:
-            beat_words = _fallback_proportional_words(beat.spoken_text, timeline_cursor, beat_dur)
+            beat_words = _fallback_proportional_words(english_caption_text, timeline_cursor, beat_dur)
 
         all_words.extend(beat_words)
         timeline_cursor += beat_dur + inter_beat_gap_sec

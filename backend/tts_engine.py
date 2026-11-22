@@ -301,14 +301,22 @@ async def _synthesize_edge_tts_beat(
     text: str,
     voice_gender: str,
     out_wav: Path,
+    language: str = "en",
 ) -> float:
     import edge_tts
 
-    voice = (
-        settings.EDGE_TTS_VOICE_FEMALE
-        if voice_gender == "female"
-        else settings.EDGE_TTS_VOICE_MALE
-    )
+    if language == "hi":
+        voice = (
+            settings.EDGE_TTS_HINDI_FEMALE
+            if voice_gender == "female"
+            else settings.EDGE_TTS_HINDI_MALE
+        )
+    else:
+        voice = (
+            settings.EDGE_TTS_VOICE_FEMALE
+            if voice_gender == "female"
+            else settings.EDGE_TTS_VOICE_MALE
+        )
     temp_mp3 = out_wav.with_suffix(".mp3")
     communicate = edge_tts.Communicate(text=text, voice=voice, rate="+16%", pitch="+2Hz")
     await communicate.save(str(temp_mp3))
@@ -337,22 +345,22 @@ def synthesize_beats_audio(
     beats: List[BeatSchema],
     work_dir: Path,
     engine: str = "qwen3",
+    language: str = "en",
     voice_profile: Optional[str] = None,
     log_fn: Optional[Callable[[str], None]] = None,
     progress_fn: Optional[Callable[[int, str], None]] = None,
 ) -> List[Path]:
     """
-    Synthesize all English beats into 44.1kHz mono PCM_16 WAV files (`beat_01.wav`, ...).
-    Supports:
-    - Cloned Voice (`clone:<filename.wav>`) via Qwen3-TTS-12Hz-0.6B-Base
-    - Built-in Qwen3 CustomVoice (`builtin:male` -> Ryan, `builtin:female` -> Serena)
-    - Fast Draft / Fallback (`edge`) via English Edge-TTS
+    Synthesize all beats into 44.1kHz mono PCM_16 WAV files (`beat_01.wav`, ...).
+    - If `language == "hi"`: Automatically routes to Indian Hindi neural Edge-TTS (`hi-IN-MadhurNeural` / `hi-IN-SwaraNeural`)
+      since Qwen3-TTS does not support Hindi.
+    - If `language == "en"`: Uses Cloned Voice (`clone:...`), Qwen3-TTS CustomVoice (`Ryan`/`Serena`), or English Edge-TTS.
     """
     work_dir.mkdir(parents=True, exist_ok=True)
     wav_paths: List[Path] = [work_dir / f"beat_{b.beat_id:02d}.wav" for b in beats]
 
     active_profile = (voice_profile or "").strip()
-    use_qwen = engine.lower() == "qwen3" or active_profile.startswith("clone:")
+    use_qwen = (language != "hi") and (engine.lower() == "qwen3" or active_profile.startswith("clone:"))
 
     if use_qwen:
         try:
@@ -473,13 +481,16 @@ def synthesize_beats_audio(
             if log_fn:
                 log_fn(f"[TTS] Qwen3-TTS unavailable or failed ({e}); falling back to English Edge-TTS...")
 
-    # Edge-TTS English synthesis
+    # Edge-TTS synthesis (English or Hindi)
     async def _run_all_edge():
         for idx, b in enumerate(beats):
             out_wav = wav_paths[idx]
+            if progress_fn:
+                pct = 10 + int(idx / max(1, len(beats)) * 35)
+                progress_fn(pct, f"Edge-TTS ({language.upper()}) synthesizing Beat {b.beat_id}/{len(beats)}...")
             if log_fn:
-                log_fn(f"[TTS] Edge-TTS English synthesizing Beat {b.beat_id}/{len(beats)}...")
-            dur = await _synthesize_edge_tts_beat(b.spoken_text, b.voice_gender, out_wav)
+                log_fn(f"[TTS] Edge-TTS ({language.upper()}) synthesizing Beat {b.beat_id}/{len(beats)}...")
+            dur = await _synthesize_edge_tts_beat(b.spoken_text, b.voice_gender, out_wav, language=language)
             b.duration_sec = dur
 
     try:

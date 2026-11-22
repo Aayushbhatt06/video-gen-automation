@@ -14,7 +14,11 @@ class BeatSchema(BaseModel):
     )
     spoken_text: str = Field(
         ...,
-        description="Natural, conversational English line written for realistic voice inflection",
+        description="Natural, conversational line written for realistic voice inflection (English or Hindi)",
+    )
+    en_subtitle: str = Field(
+        default="",
+        description="Strictly English-only caption text for this beat (used when voiceover is Hindi)",
     )
     sfx_cue: Literal["none", "pop", "whoosh", "ding", "vine_boom"] = Field(default="none")
     duration_sec: Optional[float] = Field(default=None, description="Measured audio duration after TTS")
@@ -44,7 +48,7 @@ class ScriptSchema(BaseModel):
     preset: str = Field(default="Reddit / Storytime Twist")
     provider: str = Field(default="groq")
     model: str = Field(default="openai/gpt-oss-120b")
-    language: Literal["en"] = Field(default="en")
+    language: Literal["en", "hi"] = Field(default="en")
     tts_engine: Literal["qwen3", "edge"] = Field(default="qwen3")
     voice_profile: Optional[str] = Field(
         default=None,
@@ -83,6 +87,7 @@ class ScriptSchema(BaseModel):
 class GenerateScriptRequest(BaseModel):
     topic: str = Field(default="", description="Custom topic or empty for autonomous seed topic")
     preset: str = Field(default="Reddit / Storytime Twist")
+    language: Optional[Literal["en", "hi"]] = Field(default=None)
     provider: Optional[str] = Field(default=None)
     model: Optional[str] = Field(default=None)
     tts_engine: Literal["qwen3", "edge"] = Field(default="qwen3")
@@ -139,5 +144,6 @@ class AutomationConfigUpdate(BaseModel):
     default_gemini_model: Optional[str] = None
     default_tts_engine: Optional[Literal["qwen3", "edge"]] = None
     default_voice: Optional[str] = None
+    default_language: Optional[Literal["en", "hi"]] = None
     groq_api_key: Optional[str] = None
     gemini_api_key: Optional[str] = None

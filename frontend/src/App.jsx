@@ -6,6 +6,7 @@ import {
   Calendar,
   FileEdit,
   PlusCircle,
+  Languages,
 } from "lucide-react";
 import { api } from "./api/client.js";
 import AutomationBar from "./components/AutomationBar.jsx";
@@ -64,7 +65,24 @@ export default function App() {
   useEffect(() => {
     refreshAll();
     const interval = setInterval(refreshAll, 1500);
-    return () => clearInterval(interval);
+    const handleToggleLanguage = async (nextLang) => {
+    try {
+      await api.updateSettings({ default_language: nextLang });
+      await refreshAll();
+      showToast(
+        nextLang === "hi"
+          ? "Switched to Hindi Voiceover (Captions, Title, Description & Tags stay English)"
+          : "Switched to English-only mode",
+        "success"
+      );
+    } catch (e) {
+      showToast(`Language switch failed: ${e.message}`, "error");
+    }
+  };
+
+  const activeLanguage = health?.language || "en";
+
+  return () => clearInterval(interval);
   }, []);
 
   const selectedScript = scripts.find((s) => s.id === selectedId) || null;
@@ -202,6 +220,23 @@ export default function App() {
     }
   };
 
+  const handleToggleLanguage = async (nextLang) => {
+    try {
+      await api.updateSettings({ default_language: nextLang });
+      await refreshAll();
+      showToast(
+        nextLang === "hi"
+          ? "Switched to Hindi Voiceover (Captions, Title, Description & Tags stay English)"
+          : "Switched to English-only mode",
+        "success"
+      );
+    } catch (e) {
+      showToast(`Language switch failed: ${e.message}`, "error");
+    }
+  };
+
+  const activeLanguage = health?.language || "en";
+
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-slate-950 text-slate-100">
       {/* Top Studio Bar */}
@@ -246,8 +281,36 @@ export default function App() {
           </button>
         </div>
 
-        {/* Right Status & Settings */}
+        {/* Right Status, Language Switch & Settings */}
         <div className="flex items-center gap-2.5">
+          {/* English <-> Hindi Voice Switch */}
+          <div
+            className="flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs"
+            title="Switch Voiceover Language (Captions, Title & Description always stay English)"
+          >
+            <Languages className="w-3.5 h-3.5 text-indigo-400 mx-1.5" />
+            <button
+              onClick={() => handleToggleLanguage("en")}
+              className={`px-2.5 py-1 rounded-md font-semibold transition ${
+                activeLanguage === "en"
+                  ? "bg-indigo-600 text-white"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              EN
+            </button>
+            <button
+              onClick={() => handleToggleLanguage("hi")}
+              className={`px-2.5 py-1 rounded-md font-semibold transition ${
+                activeLanguage === "hi"
+                  ? "bg-amber-500 text-slate-950"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              हिंदी (EN Cap)
+            </button>
+          </div>
+
           <button
             onClick={() => setSettingsOpen(true)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition ${
@@ -354,6 +417,7 @@ export default function App() {
           <ScriptEditor
             script={selectedScript}
             presets={health?.presets}
+            activeLanguage={activeLanguage}
             onGenerate={handleGenerateScript}
             onSaveScript={handleSaveScript}
             onRewriteBeat={handleRewriteBeat}

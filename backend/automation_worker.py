@@ -406,6 +406,7 @@ class AutomationManager:
                     script = generate_story_script(
                         topic="",
                         preset=preset,
+                        language=cfg.get("default_language", "en"),
                         provider=cfg.get("default_provider"),
                         tts_engine=cfg.get("default_tts_engine", "qwen3"),
                         voice_profile=cfg.get("default_voice", "builtin:male"),

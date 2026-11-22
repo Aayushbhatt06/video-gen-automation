@@ -146,9 +146,20 @@ export default function ScriptSidebar({
                   </button>
                 </div>
 
-                <p className="text-[11px] text-slate-400 truncate mt-1">
-                  {item.preset}
-                </p>
+                <div className="flex items-center justify-between gap-2 mt-1">
+                  <p className="text-[11px] text-slate-400 truncate">
+                    {item.preset}
+                  </p>
+                  <span
+                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase ${
+                      item.language === "hi"
+                        ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                        : "bg-slate-800 text-slate-300"
+                    }`}
+                  >
+                    {item.language === "hi" ? "HI Voice" : "EN"}
+                  </span>
+                </div>
 
                 <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-slate-800/70 text-[11px]">
                   <span

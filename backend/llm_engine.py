@@ -171,6 +171,7 @@ def call_llm_json(
 def generate_story_script(
     topic: str = "",
     preset: str = "Reddit / Storytime Twist",
+    language: str = "en",
     provider: Optional[str] = None,
     model: Optional[str] = None,
     tts_engine: str = "qwen3",
@@ -180,9 +181,10 @@ def generate_story_script(
     max_dedup_attempts: int = 3,
 ) -> ScriptSchema:
     """
-    Generate a unique, emotional, storytelling English script with full YouTube Shorts metadata.
-    Uses 3-layer story deduplication (story_history.txt prompt block + seed angles + similarity gate).
+    Generate a unique, emotional, storytelling script (`en` or `hi` voiceover)
+    with strictly English YouTube Shorts metadata and English captions.
     """
+    lang = "hi" if (language or "en").lower() == "hi" else "en"
     memory_block = build_prompt_memory_block(max_lines=140)
     seed_angle = topic.strip() if topic.strip() else pick_next_seed_angle(preset)
     rejection_feedback = ""
@@ -191,30 +193,42 @@ def generate_story_script(
     used_provider = provider or settings.DEFAULT_LLM_PROVIDER
     used_model = model or settings.DEFAULT_GROQ_MODEL
 
+    lang_rules = (
+        """VOICEOVER LANGUAGE: HINDI (conversational Indian Hindi in Devanagari script, mixing everyday English words naturally where Indians speak them — never stiff formal Shuddh Hindi).
+CRITICAL: ONLY `spoken_text` is in Hindi!
+- `en_subtitle` on EVERY beat MUST be strictly in punchy, natural ENGLISH (5-12 words) translating that beat's exact meaning for burned-in English captions.
+- `title`, `core_premise`, and ALL `youtube_meta` (`title`, `caption`, `description`, `tags`, `thumbnail_text`) MUST be strictly in ENGLISH!"""
+        if lang == "hi"
+        else """VOICEOVER LANGUAGE: ENGLISH (normal, conversational English using ONLY standard full stops (.) and commas (,), with no ellipses or artificial pauses).
+- `en_subtitle` can match `spoken_text` in English.
+- ALL `youtube_meta` (`title`, `caption`, `description`, `tags`, `thumbnail_text`) MUST be in ENGLISH."""
+    )
+
     for attempt in range(1, max_dedup_attempts + 1):
         current_seed = (
             seed_angle
             if attempt == 1 or topic.strip()
             else pick_next_seed_angle(preset)
         )
-        user_prompt = f"""Create a brand-new, high-retention English YouTube Short script.
+        user_prompt = f"""Create a brand-new, high-retention YouTube Short script.
 
 PRESET STYLE: {preset}
 SEED PREMISE / ANGLE: {current_seed}
 DEFAULT VOICE GENDER: {voice_gender}
+{lang_rules}
 
 {memory_block}
 {rejection_feedback}
 
 Return ONLY a valid JSON object matching this exact schema:
 {{
-  "title": "Short internal story title",
-  "topic": "Specific story subject",
-  "core_premise": "Compact 6-10 word summary of the unique character/object/twist for our deduplication registry",
+  "title": "Short internal story title (ALWAYS IN ENGLISH)",
+  "topic": "Specific story subject (IN ENGLISH)",
+  "core_premise": "Compact 6-10 word English summary of the unique character/object/twist for our deduplication registry",
   "youtube_meta": {{
-    "title": "Hook-driven YouTube Shorts title under 95 chars ending with #Shorts",
-    "caption": "1-2 sentence pinned comment / engagement question for viewers",
-    "description": "Full YouTube description with 2-line story hook, engagement CTA, and hashtags (#Shorts #Storytime ...)",
+    "title": "Hook-driven English YouTube Shorts title under 95 chars ending with #Shorts",
+    "caption": "1-2 sentence English pinned comment / engagement question for viewers",
+    "description": "Full English YouTube description with 2-line story hook, engagement CTA, and hashtags (#Shorts #Storytime ...)",
     "tags": ["tag1", "tag2", "tag3", "tag4", "tag5", "tag6", "tag7", "tag8", "tag9", "tag10"],
     "category_id": "{settings.YOUTUBE_CATEGORY_ID}",
     "thumbnail_text": "3 WORD HOOK"
@@ -225,7 +239,8 @@ Return ONLY a valid JSON object matching this exact schema:
       "speaker_role": "narrator",
       "voice_gender": "{voice_gender}",
       "emotion_instruct": "Speak at a steady, brisk conversational pace with confident energy and curiosity.",
-      "spoken_text": "Normal conversational English line using only full stops and commas, with no ellipses or artificial pauses.",
+      "spoken_text": "{'Natural conversational Hindi line in Devanagari script with full stops (.) or Hindi danda (।) and commas (,).' if lang == 'hi' else 'Normal conversational English line using only full stops and commas, with no ellipses or artificial pauses.'}",
+      "en_subtitle": "Strictly English punchy caption matching this beat's meaning.",
       "sfx_cue": "whoosh"
     }}
   ]
@@ -234,7 +249,7 @@ Return ONLY a valid JSON object matching this exact schema:
 Requirements Checklist:
 - 9 to 13 beats total, 95-135 spoken words total (~32-48 seconds).
 - `sfx_cue` must be one of: "none", "pop", "whoosh", "ding", "vine_boom" (use SFX sparingly on 2-4 key beats).
-- Every beat MUST use normal conversational English with ONLY standard full stops (.) and commas (,). Do NOT use `...` or `—`.
+- Every beat MUST use ONLY standard punctuation (full stops `.` / `।` and commas `,`). Do NOT use `...` or `—`.
 - Do NOT restrict to family-friendly PG content; dark humor and edgy twists are welcome when appropriate.
 """
         raw_data, used_provider, used_model = call_llm_json(
@@ -283,6 +298,10 @@ Requirements Checklist:
             or "Speak with a natural, expressive, conversational storytelling tone"
         ).strip()
 
+        en_sub = _clean_spoken_text_for_tts(str(b.get("en_subtitle") or ""))
+        if lang == "en" and not en_sub:
+            en_sub = spoken
+
         beats.append(
             BeatSchema(
                 beat_id=idx,
@@ -290,6 +309,7 @@ Requirements Checklist:
                 voice_gender=gender,  # type: ignore[arg-type]
                 emotion_instruct=instruct,
                 spoken_text=spoken,
+                en_subtitle=en_sub,
                 sfx_cue=sfx,  # type: ignore[arg-type]
             )
         )
@@ -330,8 +350,8 @@ Requirements Checklist:
         preset=preset,
         provider=used_provider,
         model=used_model,
-        language="en",
-        tts_engine="qwen3" if tts_engine == "qwen3" else "edge",
+        language=lang,  # type: ignore[arg-type]
+        tts_engine="edge" if lang == "hi" else ("qwen3" if tts_engine == "qwen3" else "edge"),
         voice_profile=voice_profile,
         background_clip=background_clip,
         youtube_meta=yt_meta,
