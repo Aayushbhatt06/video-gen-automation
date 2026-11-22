@@ -360,7 +360,8 @@ def synthesize_beats_audio(
     wav_paths: List[Path] = [work_dir / f"beat_{b.beat_id:02d}.wav" for b in beats]
 
     active_profile = (voice_profile or "").strip()
-    use_qwen = (language != "hi") and (engine.lower() == "qwen3" or active_profile.startswith("clone:"))
+    use_qwen = engine.lower() == "qwen3" or active_profile.startswith("clone:")
+    qwen_lang = "Auto" if language == "hi" else "English"
 
     if use_qwen:
         try:
@@ -394,7 +395,7 @@ def synthesize_beats_audio(
                 for start_idx in range(0, len(beats), batch_size):
                     batch = beats[start_idx : start_idx + batch_size]
                     texts = [b.spoken_text for b in batch]
-                    languages = ["English" for _ in batch]
+                    languages = [qwen_lang for _ in batch]
 
                     if progress_fn:
                         total_batches = max(1, (len(beats) + batch_size - 1) // batch_size)
@@ -435,7 +436,7 @@ def synthesize_beats_audio(
                     "Serena" if (forced_gender or b.voice_gender) == "female" else "Ryan"
                     for b in batch
                 ]
-                languages = ["English" for _ in batch]
+                languages = [qwen_lang for _ in batch]
                 instructs = [
                     "Deliver at a brisk, energetic, high-conviction pace with strong vocal power and crisp articulation. "
                     + (

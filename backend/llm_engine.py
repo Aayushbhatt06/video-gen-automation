@@ -351,7 +351,7 @@ Requirements Checklist:
         provider=used_provider,
         model=used_model,
         language=lang,  # type: ignore[arg-type]
-        tts_engine="edge" if lang == "hi" else ("qwen3" if tts_engine == "qwen3" else "edge"),
+        tts_engine="qwen3" if tts_engine == "qwen3" else "edge",
         voice_profile=voice_profile,
         background_clip=background_clip,
         youtube_meta=yt_meta,
