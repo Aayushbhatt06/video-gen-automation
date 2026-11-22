@@ -1,0 +1,39 @@
+# Environment & Secrets
+.env
+.env.local
+config/client_secret.json
+config/token.json
+config/*.json
+
+# Python / Virtual Env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Heavy Local Models & Media Assets
+models/qwen3-tts-0.6b/*
+!models/qwen3-tts-0.6b/.gitkeep
+models/whisper/*
+!models/whisper/.gitkeep
+assets/backgrounds/*
+!assets/backgrounds/.gitkeep
+assets/music/*
+!assets/music/.gitkeep
+
+# Runtime Data & Rendered Outputs
+data/
+output/
+*.mp4
+*.wav
+*.ass
+*.srt
+*.log
