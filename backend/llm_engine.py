@@ -25,11 +25,11 @@ CRITICAL VOICE & PROSODY RULES FOR QWEN3-TTS:
    - Use ellipses (`...`) for suspenseful breath pauses and em-dashes (`—`) for sharp conversational pivots.
    - Vary sentence length: follow a tense 10-word buildup with a 3-word gut-punch ("And it worked.", "Nobody noticed.", "Except one person.").
    - Spell out numbers and symbols naturally as spoken English ("three hundred thousand dollars" instead of "$300k").
-3. Every beat MUST include a vivid `emotion_instruct` field tailored for Qwen3-TTS (`instruct` parameter):
-   - Beat 1 (Hook, 0-2s): Urgent, intrigued, leaning-in vocal energy (e.g., "Speak with urgent curiosity and a hushed, gripping storytelling tone").
-   - Middle Beats (Escalation): Rising tension, disbelief, or conspiratorial warmth (e.g., "Speak with rising suspense and disbelief, pausing slightly on the key detail").
-   - Climax / Twist Beat: Dramatic reveal or stunned realization (e.g., "Speak with shocked realization and dramatic weight, slowing down on the reveal").
-   - Final Beat (Seamless Loop): Smooth, ominous or wry closing cadence that flows directly back into Beat 1.
+3. Every beat MUST include a vivid, high-energy `emotion_instruct` field tailored for Qwen3-TTS (`instruct` parameter) — NEVER ask for slow, sleepy, quiet, or monotone delivery:
+   - Beat 1 (Hook, 0-2s): Fast, punchy, high-energy vocal projection (e.g., "Speak quickly with urgent excitement and bold vocal power, hooking the listener immediately").
+   - Middle Beats (Escalation): Brisk, animated disbelief, rising intensity, or sharp curiosity (e.g., "Speak energetically with rising intensity and shocked disbelief, emphasizing the twist").
+   - Climax / Twist Beat: Explosive, dramatic reveal with strong vocal weight (e.g., "Speak with stunned, powerful realization and sharp dramatic punch").
+   - Final Beat (Seamless Loop): Crisp, confident, high-retention closing cadence that flows straight back into Beat 1.
 
 STORY & RETENTION RULES:
 - 0-2 Second Hook: Beat 1 MUST open in the middle of the tension or with a bizarre, specific claim. FORBIDDEN openings: "Did you know", "Imagine this", "Welcome back", "Today we're talking about", "In a world where".

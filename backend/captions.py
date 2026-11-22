@@ -204,7 +204,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Hormozi,Arial Black,78,&H00FFFFFF,&H0000E1FF,&H00000000,&H80000000,-1,0,0,0,100,100,1.5,0,1,7,4,2,70,70,520,1
+Style: Hormozi,Arial Black,104,&H00FFFFFF,&H0000FFFF,&H00000000,&H99000000,-1,0,0,0,100,100,2,0,1,11,6,2,60,60,500,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -244,7 +244,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             styled_tokens: List[str] = []
             for token_idx, token in enumerate(chunk):
                 if token_idx == active_idx:
-                    styled_tokens.append(r"{\c&H0000E1FF&\fscx110\fscy110}" + token.word + r"{\c&H00FFFFFF&\fscx100\fscy100}")
+                    styled_tokens.append(r"{\c&H0000FFFF&\fscx112\fscy112}" + token.word + r"{\c&H00FFFFFF&\fscx100\fscy100}")
                 else:
                     styled_tokens.append(r"{\c&H00FFFFFF&}" + token.word)
 

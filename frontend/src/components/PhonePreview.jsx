@@ -51,7 +51,10 @@ export default function PhonePreview({
               {/* Safe-Zone Hormozi Caption Preview Overlay */}
               <div className="absolute inset-0 bg-gradient-to-b from-black/25 via-transparent to-black/75 pointer-events-none flex flex-col justify-end p-4 pb-16">
                 <div className="text-center">
-                  <span className="inline-block px-2 py-0.5 bg-black/70 text-yellow-300 font-black text-sm tracking-wide uppercase rounded shadow">
+                  <span
+                    className="inline-block px-2 py-0.5 text-[#FFFF00] font-black text-base tracking-wide uppercase"
+                    style={{ WebkitTextStroke: "1.5px #000000", textShadow: "0 3px 6px rgba(0,0,0,0.95)" }}
+                  >
                     {(script?.beats?.[0]?.spoken_text || "STORY HOOK PREVIEW")
                       .split(/\s+/)
                       .slice(0, 3)

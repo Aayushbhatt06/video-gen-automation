@@ -262,6 +262,26 @@ def assemble_master_voice_and_sfx(
     return round(len(pcm16) / float(sr), 3)
 
 
+def _load_used_bg_slices() -> Dict[str, List[List[float]]]:
+    slices_file = BG_CACHE_DIR.parent / "used_bg_slices.json"
+    if not slices_file.exists():
+        return {}
+    try:
+        data = json.loads(slices_file.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _record_used_bg_slice(filename: str, start_sec: float, duration_sec: float) -> None:
+    slices_file = BG_CACHE_DIR.parent / "used_bg_slices.json"
+    data = _load_used_bg_slices()
+    entries = data.get(filename, [])
+    entries.append([round(start_sec, 2), round(start_sec + duration_sec, 2)])
+    data[filename] = entries[-250:]
+    slices_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
 def _pick_background_clip_and_offset(
     requested_clip: str,
     requested_start: float,
@@ -274,6 +294,10 @@ def _pick_background_clip_and_offset(
     all_files = sorted(
         [p for p in BACKGROUNDS_DIR.iterdir() if p.is_file() and p.suffix.lower() in SUPPORTED_VIDEO_EXTS]
     )
+    # Prefer user-added gameplay clips over the auto-generated starter background
+    real_clips = [p for p in all_files if p.name != "starter_neon_parkour_bg.mp4"]
+    candidate_pool = real_clips if real_clips else all_files
+
     if requested_clip and requested_clip != "random":
         candidate = BACKGROUNDS_DIR / requested_clip
         if candidate.exists():
@@ -282,18 +306,30 @@ def _pick_background_clip_and_offset(
             max_start = max(0.0, clip_dur - target_duration - 0.5)
             start_sec = min(max(0.0, requested_start), max_start)
             _LAST_PICKED_CLIP = candidate.name
+            _record_used_bg_slice(candidate.name, start_sec, target_duration)
             return candidate, round(start_sec, 2)
 
-    pool = [p for p in all_files if p.name != _LAST_PICKED_CLIP] or all_files
+    pool = [p for p in candidate_pool if p.name != _LAST_PICKED_CLIP] or candidate_pool
     chosen = random.choice(pool)
     _LAST_PICKED_CLIP = chosen.name
 
     info = _probe_video_file(chosen)
     clip_dur = float(info.get("duration_sec") or 60.0)
+    start_sec = 0.0
     if clip_dur > target_duration + 2.0:
-        start_sec = random.uniform(0.5, clip_dur - target_duration - 1.0)
-    else:
-        start_sec = 0.0
+        max_start = clip_dur - target_duration - 1.0
+        used_ranges = _load_used_bg_slices().get(chosen.name, [])
+        for _ in range(30):
+            cand_start = random.uniform(0.5, max_start)
+            cand_end = cand_start + target_duration
+            overlaps = any(not (cand_end <= r[0] or cand_start >= r[1]) for r in used_ranges)
+            if not overlaps:
+                start_sec = cand_start
+                break
+        else:
+            start_sec = random.uniform(0.5, max_start)
+
+    _record_used_bg_slice(chosen.name, start_sec, target_duration)
     return chosen, round(start_sec, 2)
 
 
@@ -341,7 +377,7 @@ def render_short_project(
     word_timings = extract_word_timings_for_beats(
         beats=script.beats,
         beat_wavs=beat_wavs,
-        inter_beat_gap_sec=0.14,
+        inter_beat_gap_sec=0.07,
         log_fn=_log,
     )
 
@@ -356,7 +392,7 @@ def render_short_project(
         beats=script.beats,
         beat_wavs=beat_wavs,
         out_master_wav=master_wav,
-        inter_beat_gap_sec=0.14,
+        inter_beat_gap_sec=0.07,
     )
     script.duration_sec = total_audio_dur
 

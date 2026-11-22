@@ -43,13 +43,51 @@ def _resample_to_44100_pcm16(audio_np: np.ndarray, orig_sr: int, out_path: Path)
         arr = np.interp(x_new, x_old, arr).astype(np.float32)
 
     pcm16 = np.clip(arr * 32767.0, -32768, 32767).astype(np.int16)
-    with wave.open(str(out_path), "wb") as wf:
+    raw_tmp = out_path.with_suffix(".raw.wav")
+    with wave.open(str(raw_tmp), "wb") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(target_sr)
         wf.writeframes(pcm16.tobytes())
 
-    return round(len(pcm16) / float(target_sr), 3)
+    # Apply 1.18x brisk storytelling pace + broadcast vocal compression & clarity EQ
+    ffmpeg_exe = get_ffmpeg_exe()
+    af_chain = (
+        "atempo=1.18,"
+        "highpass=f=85,"
+        "equalizer=f=240:t=q:w=1.2:g=2.0,"
+        "equalizer=f=3200:t=q:w=1.2:g=3.2,"
+        "acompressor=threshold=-18dB:ratio=3.5:attack=5:release=60:makeup=3.5dB,"
+        "alimiter=limit=0.95"
+    )
+    try:
+        subprocess.run(
+            [
+                ffmpeg_exe,
+                "-y",
+                "-i",
+                str(raw_tmp),
+                "-af",
+                af_chain,
+                "-ac",
+                "1",
+                "-ar",
+                str(target_sr),
+                "-c:a",
+                "pcm_s16le",
+                str(out_path),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+        if raw_tmp.exists():
+            raw_tmp.unlink()
+    except Exception:
+        if raw_tmp.exists():
+            raw_tmp.replace(out_path)
+
+    return _get_wav_duration(out_path)
 
 
 def _load_qwen_model(log_fn: Optional[Callable[[str], None]] = None):
@@ -100,7 +138,7 @@ async def _synthesize_edge_tts_beat(
         else settings.EDGE_TTS_VOICE_MALE
     )
     temp_mp3 = out_wav.with_suffix(".mp3")
-    communicate = edge_tts.Communicate(text=text, voice=voice, rate="+4%")
+    communicate = edge_tts.Communicate(text=text, voice=voice, rate="+16%", pitch="+2Hz")
     await communicate.save(str(temp_mp3))
 
     ffmpeg_exe = get_ffmpeg_exe()
@@ -149,8 +187,11 @@ def synthesize_beats_audio(
                 speakers = ["Serena" if b.voice_gender == "female" else "Ryan" for b in batch]
                 languages = ["English" for _ in batch]
                 instructs = [
-                    b.emotion_instruct
-                    or "Speak with a captivating, emotional, natural storytelling tone"
+                    "Deliver at a brisk, energetic, high-conviction pace with strong vocal power and crisp articulation. "
+                    + (
+                        b.emotion_instruct
+                        or "Sound captivated, expressive, and urgent like a gripping viral storyteller."
+                    )
                     for b in batch
                 ]
 
