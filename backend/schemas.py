@@ -54,6 +54,7 @@ class ScriptSchema(BaseModel):
     beats: List[BeatSchema]
     status: Literal[
         "draft",
+        "queued",
         "rendering",
         "rendered",
         "qa_failed",

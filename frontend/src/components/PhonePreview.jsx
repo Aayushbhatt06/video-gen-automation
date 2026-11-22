@@ -11,6 +11,7 @@ import BackgroundPicker from "./BackgroundPicker.jsx";
 
 export default function PhonePreview({
   script,
+  automation,
   backgrounds,
   onUpdateScript,
   onUploadBackground,
@@ -20,6 +21,10 @@ export default function PhonePreview({
   uploadingYt,
 }) {
   const hasVideo = Boolean(script?.video_url);
+  const isCurrentActive =
+    script && automation?.current_script_id === script.id && (automation?.progress_pct ?? 0) > 0;
+  const isQueued = script?.status === "queued";
+  const isRendering = script?.status === "rendering";
   const selectedBg =
     backgrounds.find((c) => c.filename === script?.background_clip) ||
     backgrounds[0];
@@ -81,32 +86,52 @@ export default function PhonePreview({
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={() => onRender(false)}
-              disabled={rendering || script.status === "rendering"}
+              disabled={rendering || isRendering || isQueued}
               className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition disabled:opacity-50"
             >
-              {rendering || script.status === "rendering" ? (
+              {isQueued ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  Rendering...
+                  Queued...
+                </>
+              ) : isRendering || rendering ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  {isCurrentActive ? `${automation.progress_pct}%` : "Rendering..."}
                 </>
               ) : (
                 <>
                   <Sparkles className="w-3.5 h-3.5" />
-                  Render Short
+                  {automation?.current_script_id ? "Queue Render" : "Render Short"}
                 </>
               )}
             </button>
 
             <button
               onClick={() => onRender(true)}
-              disabled={rendering || script.status === "rendering"}
-              title="Render and immediately upload as Unlisted into the next 12PM/3PM/6PM/9PM slot"
+              disabled={rendering || isRendering || isQueued}
+              title="Schedule in pipeline and auto-upload into the next 12PM/3PM/6PM/9PM slot"
               className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold transition disabled:opacity-50"
             >
               <Youtube className="w-3.5 h-3.5" />
-              Render + Schedule
+              {automation?.current_script_id ? "Queue + Schedule" : "Render + Schedule"}
             </button>
           </div>
+
+          {isCurrentActive && (
+            <div className="bg-slate-950/90 border border-slate-800 rounded-xl p-2.5 space-y-1.5">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-slate-300 truncate pr-2">{automation.progress_stage}</span>
+                <span className="font-mono font-bold text-indigo-300">{automation.progress_pct}%</span>
+              </div>
+              <div className="h-1.5 bg-slate-900 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-indigo-500 to-emerald-400 transition-all duration-500"
+                  style={{ width: `${Math.max(4, automation.progress_pct)}%` }}
+                />
+              </div>
+            </div>
+          )}
 
           {hasVideo && (
             <div className="flex items-center gap-2">

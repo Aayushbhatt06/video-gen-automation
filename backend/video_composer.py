@@ -343,6 +343,7 @@ def _escape_ffmpeg_subtitles_path(ass_path: Path) -> str:
 def render_short_project(
     script: ScriptSchema,
     log_fn: Optional[Callable[[str], None]] = None,
+    progress_fn: Optional[Callable[[int, str], None]] = None,
 ) -> ScriptSchema:
     """
     End-to-End Render Pipeline:
@@ -358,6 +359,10 @@ def render_short_project(
         if log_fn:
             log_fn(msg)
 
+    def _prog(pct: int, stage: str):
+        if progress_fn:
+            progress_fn(pct, stage)
+
     script.status = "rendering"
     script.updated_at = datetime.now().isoformat(timespec="seconds")
     save_script(script)
@@ -365,14 +370,17 @@ def render_short_project(
     work_dir = TEMP_DIR / script.id
     work_dir.mkdir(parents=True, exist_ok=True)
 
+    _prog(8, f"Synthesizing English voiceover ({script.tts_engine})...")
     _log(f"[Pipeline] Step 1/5: Synthesizing emotional English voiceover ({script.tts_engine})...")
     beat_wavs = synthesize_beats_audio(
         beats=script.beats,
         work_dir=work_dir,
         engine=script.tts_engine,
         log_fn=_log,
+        progress_fn=progress_fn,
     )
 
+    _prog(48, "Aligning 1:1 word captions (faster-whisper)...")
     _log("[Pipeline] Step 2/5: Running faster-whisper 1:1 word timestamp alignment...")
     word_timings = extract_word_timings_for_beats(
         beats=script.beats,
@@ -386,6 +394,7 @@ def render_short_project(
     generate_hormozi_ass_and_srt(word_timings, ass_path=ass_path, srt_path=srt_path)
     _log(f"[Pipeline] Generated Hormozi .ASS captions ({len(word_timings)} timed words).")
 
+    _prog(64, "Mastering voiceover & SFX track...")
     _log("[Pipeline] Step 3/5: Mastering voiceover & punchline SFX track...")
     master_wav = work_dir / f"{script.id}_master.wav"
     total_audio_dur = assemble_master_voice_and_sfx(
@@ -396,6 +405,7 @@ def render_short_project(
     )
     script.duration_sec = total_audio_dur
 
+    _prog(72, "Rendering 9:16 gameplay video & burning captions (FFmpeg)...")
     _log("[Pipeline] Step 4/5: Selecting 9:16 gameplay background & running FFmpeg single-pass composer...")
     bg_path, start_offset = _pick_background_clip_and_offset(
         requested_clip=script.background_clip,
@@ -522,6 +532,7 @@ def render_short_project(
         save_script(script)
         raise RuntimeError(f"FFmpeg render failed: {err_tail}")
 
+    _prog(94, "Running automated QA Gate...")
     _log("[Pipeline] Step 5/5: Running automated QA Gate...")
     qa_report = run_qa_gate(out_mp4, ass_path)
     script.qa_report = qa_report
@@ -530,6 +541,7 @@ def render_short_project(
     script.status = "rendered" if qa_report.get("passed") else "qa_failed"
     script.updated_at = datetime.now().isoformat(timespec="seconds")
     save_script(script)
+    _prog(100, "Render complete!")
 
     _log(
         f"[Pipeline] Render complete: {out_mp4.name} "

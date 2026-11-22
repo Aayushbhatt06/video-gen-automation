@@ -60,7 +60,7 @@ export default function App() {
 
   useEffect(() => {
     refreshAll();
-    const interval = setInterval(refreshAll, 3500);
+    const interval = setInterval(refreshAll, 1500);
     return () => clearInterval(interval);
   }, []);
 
@@ -360,6 +360,7 @@ export default function App() {
 
         <PhonePreview
           script={selectedScript}
+          automation={health?.automation}
           backgrounds={backgrounds}
           onUpdateScript={handleSaveScript}
           onUploadBackground={async (file) => {

@@ -12,6 +12,7 @@ import {
 
 const STATUS_BADGES = {
   draft: { label: "Draft", color: "bg-slate-800 text-slate-300 border-slate-700" },
+  queued: { label: "Queued in Pipeline", color: "bg-purple-500/20 text-purple-300 border-purple-500/40" },
   rendering: { label: "Rendering", color: "bg-indigo-500/20 text-indigo-300 border-indigo-500/40" },
   rendered: { label: "Rendered", color: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" },
   ready_to_upload: { label: "Ready for YT", color: "bg-cyan-500/15 text-cyan-300 border-cyan-500/30" },

@@ -166,6 +166,7 @@ def synthesize_beats_audio(
     work_dir: Path,
     engine: str = "qwen3",
     log_fn: Optional[Callable[[str], None]] = None,
+    progress_fn: Optional[Callable[[int, str], None]] = None,
 ) -> List[Path]:
     """
     Synthesize all English beats into 44.1kHz mono PCM_16 WAV files (`beat_01.wav`, ...).
@@ -195,6 +196,11 @@ def synthesize_beats_audio(
                     for b in batch
                 ]
 
+                if progress_fn:
+                    total_batches = max(1, (len(beats) + batch_size - 1) // batch_size)
+                    cur_batch = start_idx // batch_size + 1
+                    pct = 10 + int((cur_batch - 1) / total_batches * 35)
+                    progress_fn(pct, f"Qwen3-TTS GPU batch {cur_batch}/{total_batches} (beats {batch[0].beat_id}-{batch[-1].beat_id})...")
                 if log_fn:
                     log_fn(
                         f"[TTS] Qwen3-TTS GPU batch {start_idx // batch_size + 1} "

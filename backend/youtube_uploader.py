@@ -141,6 +141,7 @@ def upload_short_scheduled(
     script: ScriptSchema,
     publish_at_iso: str,
     log_fn: Optional[Callable[[str], None]] = None,
+    progress_fn: Optional[Callable[[int, str], None]] = None,
 ) -> Dict[str, Any]:
     """
     Upload the rendered Short directly to the user's YouTube channel with native
@@ -212,9 +213,12 @@ def upload_short_scheduled(
     response = None
     while response is None:
         status, response = request.next_chunk()
-        if status and log_fn:
+        if status:
             pct = int(status.progress() * 100)
-            log_fn(f"[YouTube] Upload progress: {pct}%...")
+            if progress_fn:
+                progress_fn(pct, f"Uploading to YouTube ({pct}%)...")
+            if log_fn:
+                log_fn(f"[YouTube] Upload progress: {pct}%...")
 
     video_id = response.get("id")
     actual_privacy = (response.get("status") or {}).get("privacyStatus", "private")

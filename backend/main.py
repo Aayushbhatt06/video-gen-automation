@@ -257,7 +257,7 @@ def api_delete_background(filename: str):
 # Rendering & YouTube Two-Stage Scheduled Upload
 # ---------------------------------------------------------------------------
 @app.post("/api/scripts/{script_id}/render")
-def api_render_script(script_id: str, req: RenderRequest, background_tasks: BackgroundTasks):
+def api_render_script(script_id: str, req: RenderRequest):
     try:
         script = load_script(script_id)
     except FileNotFoundError as e:
@@ -273,19 +273,12 @@ def api_render_script(script_id: str, req: RenderRequest, background_tasks: Back
         script.crop_align = req.crop_align
     if req.start_sec is not None:
         script.start_sec = req.start_sec
-    script.status = "rendering"
     save_script(script)
 
-    def _bg_render_and_optional_schedule():
-        try:
-            rendered = render_short_project(script, log_fn=automation_manager.log)
-            if req.auto_upload_youtube and rendered.status == "rendered":
-                _schedule_and_upload_scheduled(rendered)
-        except Exception as e:
-            automation_manager.log(f"[Render Error] {script.id}: {e}")
-
-    background_tasks.add_task(_bg_render_and_optional_schedule)
-    return {"started": True, "script_id": script.id, "status": "rendering"}
+    return automation_manager.enqueue_render(
+        script_id=script.id,
+        auto_upload_youtube=req.auto_upload_youtube,
+    )
 
 
 def _schedule_and_upload_scheduled(script: ScriptSchema) -> Dict:
