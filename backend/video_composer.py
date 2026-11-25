@@ -68,7 +68,34 @@ def _probe_video_file(video_path: Path) -> Dict:
             "fps": fps,
         }
     except Exception:
-        return {"width": 1920, "height": 1080, "duration_sec": 60.0, "fps": 30.0}
+        # Fallback: parse `ffmpeg -i` stderr when ffprobe is not on PATH
+        import re
+        try:
+            ffmpeg_exe = get_ffmpeg_exe()
+            res = subprocess.run(
+                [ffmpeg_exe, "-i", str(video_path)],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            err = res.stderr or ""
+            dur_m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", err)
+            duration = 60.0
+            if dur_m:
+                duration = int(dur_m.group(1)) * 3600 + int(dur_m.group(2)) * 60 + float(dur_m.group(3))
+            dim_m = re.search(r"Video:.*?,\s*(\d{3,5})x(\d{3,5})", err)
+            width = int(dim_m.group(1)) if dim_m else 1920
+            height = int(dim_m.group(2)) if dim_m else 1080
+            fps_m = re.search(r"(\d+(?:\.\d+)?)\s*fps", err)
+            fps = float(fps_m.group(1)) if fps_m else 30.0
+            return {
+                "width": width,
+                "height": height,
+                "duration_sec": round(duration, 2),
+                "fps": fps,
+            }
+        except Exception:
+            return {"width": 1920, "height": 1080, "duration_sec": 60.0, "fps": 30.0}
 
 
 def list_background_clips() -> List[Dict]:
@@ -333,6 +360,127 @@ def _pick_background_clip_and_offset(
     return chosen, round(start_sec, 2)
 
 
+def _prepare_background_source(
+    requested_clip: str,
+    requested_start: float,
+    target_duration: float,
+    work_dir: Path,
+    log_fn: Optional[Callable[[str], None]] = None,
+) -> tuple[Path, float]:
+    """
+    Return a background video path + start_offset guaranteed to be at least `target_duration + 0.5s` long.
+    If the chosen clip is shorter than `target_duration` (e.g. a 70s+ story on 65s parkour clips),
+    automatically merges multiple random non-repeating clips from `assets/backgrounds/` into `merged_bg.mp4`.
+    """
+    bg_path, start_offset = _pick_background_clip_and_offset(
+        requested_clip=requested_clip,
+        requested_start=requested_start,
+        target_duration=target_duration,
+        log_fn=log_fn,
+    )
+    info = _probe_video_file(bg_path)
+    clip_dur = float(info.get("duration_sec") or 60.0)
+    needed_dur = target_duration + 1.0
+
+    if clip_dur - start_offset >= needed_dur:
+        return bg_path, start_offset
+
+    # Merge multiple clips from assets/backgrounds/ to cover longer stories seamlessly
+    all_files = sorted(
+        [p for p in BACKGROUNDS_DIR.iterdir() if p.is_file() and p.suffix.lower() in SUPPORTED_VIDEO_EXTS]
+    )
+    real_clips = [p for p in all_files if p.name != "starter_neon_parkour_bg.mp4"]
+    pool = real_clips if real_clips else all_files
+
+    chosen_clips: List[Path] = [bg_path]
+    accumulated = clip_dur
+    other_pool = [p for p in pool if p != bg_path]
+    random.shuffle(other_pool)
+
+    for candidate in other_pool:
+        if accumulated >= needed_dur:
+            break
+        c_info = _probe_video_file(candidate)
+        c_dur = float(c_info.get("duration_sec") or 60.0)
+        chosen_clips.append(candidate)
+        accumulated += c_dur
+
+    # If still shorter (e.g. only 1 short clip exists), repeat from pool
+    idx = 0
+    while accumulated < needed_dur and pool:
+        extra = pool[idx % len(pool)]
+        c_info = _probe_video_file(extra)
+        chosen_clips.append(extra)
+        accumulated += float(c_info.get("duration_sec") or 60.0)
+        idx += 1
+
+    concat_list = work_dir / "bg_concat.txt"
+    concat_lines = [f"file '{p.resolve().as_posix()}'" for p in chosen_clips]
+    concat_list.write_text("\n".join(concat_lines) + "\n", encoding="utf-8")
+
+    merged_path = work_dir / "merged_bg.mp4"
+    ffmpeg_exe = get_ffmpeg_exe()
+    if log_fn:
+        names = ", ".join(p.name for p in chosen_clips)
+        log_fn(
+            f"[Video] Story duration ({target_duration:.1f}s) exceeds single clip ({clip_dur:.1f}s); "
+            f"merging {len(chosen_clips)} clips ({names})..."
+        )
+
+    res = subprocess.run(
+        [
+            ffmpeg_exe,
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(concat_list),
+            "-c:v",
+            "copy",
+            "-an",
+            str(merged_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if res.returncode != 0 or not merged_path.exists():
+        # Fallback: re-encode concat if clips have mixed resolutions/codecs
+        inputs = []
+        filter_parts = []
+        for i, p in enumerate(chosen_clips):
+            inputs.extend(["-i", str(p)])
+            filter_parts.append(f"[{i}:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30[v{i}]")
+        v_concat = "".join(f"[v{i}]" for i in range(len(chosen_clips)))
+        fc = ";".join(filter_parts) + f";{v_concat}concat=n={len(chosen_clips)}:v=1:a=0[vout]"
+        subprocess.run(
+            [
+                ffmpeg_exe,
+                "-y",
+                *inputs,
+                "-filter_complex",
+                fc,
+                "-map",
+                "[vout]",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "20",
+                "-pix_fmt",
+                "yuv420p",
+                str(merged_path),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+
+    return merged_path, 0.0
+
+
 def _escape_ffmpeg_subtitles_path(ass_path: Path) -> str:
     """Format Windows path for FFmpeg `ass='...'` filter (`D\\:/path/to/file.ass`)."""
     posix_str = ass_path.resolve().as_posix()
@@ -412,13 +560,14 @@ def render_short_project(
 
     _prog(72, "Rendering 9:16 gameplay video & burning captions (FFmpeg)...")
     _log("[Pipeline] Step 4/5: Selecting 9:16 gameplay background & running FFmpeg single-pass composer...")
-    bg_path, start_offset = _pick_background_clip_and_offset(
+    bg_path, start_offset = _prepare_background_source(
         requested_clip=script.background_clip,
         requested_start=script.start_sec,
         target_duration=total_audio_dur,
+        work_dir=work_dir,
         log_fn=_log,
     )
-    _log(f"[Video] Background clip: {bg_path.name} (start={start_offset}s, duration={total_audio_dur}s)")
+    _log(f"[Video] Background source: {bg_path.name} (start={start_offset}s, duration={total_audio_dur}s)")
 
     if script.crop_align == "left":
         crop_x = "0"

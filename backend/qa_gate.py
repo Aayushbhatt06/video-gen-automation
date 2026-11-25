@@ -73,8 +73,8 @@ def run_qa_gate(video_path: Path, ass_path: Path) -> Dict[str, Any]:
 
         duration = round(float(fmt.get("duration") or 0.0), 2)
         checks["duration_sec"] = duration
-        if duration < 12.0 or duration > 65.0:
-            errors.append(f"Duration {duration}s outside Shorts target window (12s-65s)")
+        if duration < 12.0 or duration > 175.0:
+            errors.append(f"Duration {duration}s outside Shorts target window (12s-175s)")
     except Exception as e:
         checks["ffprobe_warning"] = str(e)
 
