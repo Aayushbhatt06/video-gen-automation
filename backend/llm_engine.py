@@ -76,6 +76,7 @@ Choose the storytelling style that best fits the subject:
 5. HORROR: Creepy situations, unsettling details, psychological fear, and genuinely disturbing endings.
 6. HUMAN DRAMA: Betrayal, revenge, greed, jealousy, desperation, and morally complicated decisions.
 7. REAL-WORLD ABSURDITY: Extraordinary real events, bizarre incidents, unbelievable coincidences, and strange human behavior.
+8. SCIENCE FACTS & AMAZING HISTORY: Mind-blowing real scientific phenomena, accidental discoveries, high-stakes historical turning points, and bizarre natural laws told as gripping, dramatic cause-and-effect stories (never as a dry textbook lecture).
 
 Do not force every story into a horror or dark-humor format. Select the style that produces the strongest narrative.
 Do NOT restrict stories to sanitized family-friendly PG tropes; edgy irony, moral chaos, and dark humor are welcome when they make the story sharper.
@@ -208,7 +209,7 @@ Generate complete English YouTube Shorts metadata (`youtube_meta`):
 - `caption`: 1–2 punchy sentences asking a debate-worthy question about the twist or moral dilemma (no "like and subscribe").
 - `description`: Compelling 2-line teaser (without spoiling the final twist), engaging question, and 5–8 relevant hashtags including `#Shorts` and `#Storytime`.
 - `tags`: 10–14 high-intent English search tags (no `#` symbols).
-- `category_id`: `"24"` (Entertainment) or `"20"` (Gaming).
+- `category_id`: `"24"` (Entertainment), `"27"` (Education / History), `"28"` (Science & Technology), or `"20"` (Gaming).
 - `thumbnail_text`: 2–4 uppercase words, readable at a glance, distinct from the title.
 
 ---

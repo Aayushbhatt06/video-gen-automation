@@ -78,6 +78,22 @@ SEED_ANGLES_BY_PRESET: Dict[str, List[str]] = {
         "The telegraph operator who stopped a runaway munitions train by short-circuiting a river drawbridge signal",
         "The ancient harbor chain defense bypassed by sliding greased warships overland on timber logs overnight",
     ],
+    "Science Facts & Amazing History": [
+        "The accidental lab petri dish left by an open window in 1928 that saved over two hundred million human lives",
+        "The deep-ocean hydrothermal vent ecosystem discovered in pitch-black crushing pressure that thrives without sunlight",
+        "The 1983 Soviet nuclear early-warning officer who prevented World War Three by trusting a gut instinct about sunlight on clouds",
+        "The bizarre quantum time-dilation effect proving GPS satellites age microseconds differently from clocks on Earth every single day",
+        "The ancient Roman harbor concrete mixed with volcanic ash and seawater that actually grows stronger every century",
+        "The astronomer who noticed a tiny wobble in Uranus's orbit and discovered Neptune using only pen-and-paper math",
+        "The 19th-century physician laughed out of Vienna hospitals for proving invisible germs on unwashed hands caused ward fevers",
+        "The immortal jellyfish species capable of reversing its entire adult cellular life cycle back into an infant polyp when injured",
+        "The Apollo 13 duct-tape and cardboard carbon-dioxide scrubber built in mid-space to keep three astronauts breathing",
+        "The cosmic microwave background hiss first mistaken for pigeon droppings on a Bell Labs horn antenna in 1964",
+        "The medieval siege of Kaffa and the Silk Road quarantine ships that invented the forty-day isolation word quaranta",
+        "The tardigrade microscopic survival trick of turning its own cells into solid bioglass to survive the vacuum of space",
+        "The forgotten female codebreaker who cracked spy ciphers hidden inside knitting patterns during wartime",
+        "The natural nuclear fission reactor inside uranium rock in Gabon that ran by itself two billion years ago",
+    ],
 }
 
 
