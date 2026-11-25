@@ -492,6 +492,11 @@ export default function App() {
           showToast(res.message || "Base model download started", "info");
           await refreshAll();
         }}
+        onDownload17bModel={async () => {
+          const res = await api.download17bVoiceModel();
+          showToast(res.message || "1.7B Instruct model download started (~3.4GB)", "info");
+          await refreshAll();
+        }}
       />
     </div>
   );

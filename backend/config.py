@@ -110,7 +110,10 @@ YOUTUBE_TOKEN_FILE = CONFIG_DIR / "token.json"
 
 
 def get_qwen_model_dir() -> Path:
-    """Resolve local Qwen3-TTS CustomVoice weights, falling back to sibling v1 folder if present."""
+    """Resolve local Qwen3-TTS CustomVoice weights (prefers 1.7B instruct-capable model if present, else 0.6B)."""
+    dir_17b = MODELS_DIR / "qwen3-tts-1.7b"
+    if (dir_17b / "config.json").exists():
+        return dir_17b
     local_dir = MODELS_DIR / "qwen3-tts-0.6b"
     if (local_dir / "config.json").exists():
         return local_dir

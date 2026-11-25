@@ -22,6 +22,8 @@ frontend/.vite/
 # Heavy Local Models & Media Assets
 models/qwen3-tts-0.6b/*
 !models/qwen3-tts-0.6b/.gitkeep
+models/qwen3-tts-1.7b/*
+!models/qwen3-tts-1.7b/.gitkeep
 models/qwen3-tts-0.6b-base/*
 !models/qwen3-tts-0.6b-base/.gitkeep
 models/whisper/*

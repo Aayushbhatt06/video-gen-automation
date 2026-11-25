@@ -29,7 +29,9 @@ from backend.config import (
 )
 from backend.tts_engine import (
     delete_custom_voice_sample,
+    download_qwen_17b_custom_model,
     download_qwen_base_model,
+    is_qwen_17b_custom_ready,
     is_qwen_base_model_ready,
     list_available_voices,
     save_custom_voice_sample,
@@ -281,6 +283,7 @@ def api_list_voices():
     return {
         "default_voice": default_voice,
         "base_clone_model_ready": is_qwen_base_model_ready(),
+        "instruct_17b_model_ready": is_qwen_17b_custom_ready(),
         "voices": list_available_voices(default_voice=default_voice),
     }
 
@@ -358,6 +361,14 @@ def api_download_base_model(background_tasks: BackgroundTasks):
         return {"ready": True, "message": "Qwen3-TTS-12Hz-0.6B-Base is already downloaded."}
     background_tasks.add_task(download_qwen_base_model, automation_manager.log)
     return {"ready": False, "started": True, "message": "Downloading Qwen3-TTS-12Hz-0.6B-Base in background..."}
+
+
+@app.post("/api/voices/download-17b-model")
+def api_download_17b_model(background_tasks: BackgroundTasks):
+    if is_qwen_17b_custom_ready():
+        return {"ready": True, "message": "Qwen3-TTS-12Hz-1.7B-CustomVoice is already downloaded."}
+    background_tasks.add_task(download_qwen_17b_custom_model, automation_manager.log)
+    return {"ready": False, "started": True, "message": "Downloading Qwen3-TTS-12Hz-1.7B-CustomVoice (~3.4GB) in background..."}
 
 
 # ---------------------------------------------------------------------------

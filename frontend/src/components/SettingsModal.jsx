@@ -26,6 +26,7 @@ export default function SettingsModal({
   onSetDefaultVoice,
   onDeleteVoice,
   onDownloadBaseModel,
+  onDownload17bModel,
 }) {
   if (!open) return null;
 
@@ -51,6 +52,7 @@ export default function SettingsModal({
 
   const voices = voicesData?.voices || [];
   const baseModelReady = voicesData?.base_clone_model_ready ?? health?.tts?.base_clone_model_ready;
+  const instruct17bReady = voicesData?.instruct_17b_model_ready;
 
   const handleVoiceSubmit = async () => {
     if (!voiceFile) return;
@@ -266,19 +268,35 @@ export default function SettingsModal({
                 <Mic className="w-4 h-4 text-purple-400" />
                 <span>Qwen3 Voice Cloning &amp; Default Narrator</span>
               </div>
-              {baseModelReady ? (
-                <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full">
-                  0.6B-Base Ready ✓
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={onDownloadBaseModel}
-                  className="text-[11px] font-semibold text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2.5 py-0.5 rounded-full hover:bg-amber-500/20"
-                >
-                  Download 0.6B-Base Model
-                </button>
-              )}
+              <div className="flex items-center gap-1.5">
+                {instruct17bReady ? (
+                  <span className="text-[11px] font-semibold text-indigo-300 bg-indigo-500/15 border border-indigo-500/30 px-2 py-0.5 rounded-full">
+                    1.7B Instruct ✓
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={onDownload17bModel}
+                    title="Download Qwen3-TTS 1.7B CustomVoice (~3.4GB) which natively supports per-beat emotion_instruct voice acting"
+                    className="text-[11px] font-semibold text-indigo-300 bg-indigo-500/15 border border-indigo-500/30 px-2.5 py-0.5 rounded-full hover:bg-indigo-500/25"
+                  >
+                    + Get 1.7B Instruct
+                  </button>
+                )}
+                {baseModelReady ? (
+                  <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                    0.6B-Base Ready ✓
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={onDownloadBaseModel}
+                    className="text-[11px] font-semibold text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2.5 py-0.5 rounded-full hover:bg-amber-500/20"
+                  >
+                    Download 0.6B-Base Model
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Available Voices List */}

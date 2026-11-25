@@ -89,6 +89,10 @@ export const api = {
     request("/api/voices/download-base-model", {
       method: "POST",
     }),
+  download17bVoiceModel: () =>
+    request("/api/voices/download-17b-model", {
+      method: "POST",
+    }),
 
   // Rendering & Scheduled Upload
   renderScript: (scriptId, payload = {}) =>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import os
 import subprocess
@@ -11,6 +12,7 @@ from typing import Callable, Dict, List, Optional
 import numpy as np
 
 from backend.config import (
+    MODELS_DIR,
     VOICES_DIR,
     get_ffmpeg_exe,
     get_qwen_base_model_dir,
@@ -31,8 +33,37 @@ def _get_wav_duration(wav_path: Path) -> float:
         return round(frames / float(rate), 3) if rate else 0.0
 
 
-def _resample_to_44100_pcm16(audio_np: np.ndarray, orig_sr: int, out_path: Path) -> float:
-    """Save numpy float waveform to 44100 Hz mono 16-bit PCM WAV with brisk 1.18x pace & vocal punch."""
+def _derive_beat_dsp_params(emotion_instruct: str, beat_id: int, total_beats: int) -> tuple[float, float, float]:
+    """
+    Derive dynamic (tempo, presence_gain_db, makeup_gain_db) from `emotion_instruct` and beat role
+    so vocal pacing and punch vary across the narrative arc even on 0.6B / Base models.
+    """
+    ins = (emotion_instruct or "").lower()
+    if beat_id == 1 or "hook" in ins or "immediate urgency" in ins:
+        return 1.21, 3.8, 4.0
+    if "climax" in ins or "shock" in ins or "disbelief" in ins or "hit hard" in ins:
+        return 1.19, 3.6, 4.0
+    if "suspense" in ins or "alarmed" in ins or "controlled intensity" in ins:
+        return 1.15, 3.0, 3.4
+    if beat_id == total_beats or "twist" in ins or "mischievous" in ins:
+        return 1.17, 3.5, 3.8
+    return 1.18, 3.3, 3.6
+
+
+def _postprocess_beat_audio(
+    audio_np: np.ndarray,
+    orig_sr: int,
+    out_path: Path,
+    emotion_instruct: str = "",
+    beat_id: int = 1,
+    total_beats: int = 10,
+) -> float:
+    """
+    Save numpy float waveform to 44100 Hz mono 16-bit PCM WAV with:
+    1. Leading/trailing dead-air removal + internal unnatural pause tightening (`silenceremove`)
+    2. Beat-role-aware brisk tempo (`atempo`)
+    3. Broadcast vocal warmth, 3.2kHz articulation presence, compression & limiting
+    """
     arr = np.asarray(audio_np, dtype=np.float32).squeeze()
     if arr.ndim > 1:
         arr = arr.mean(axis=-1)
@@ -41,7 +72,7 @@ def _resample_to_44100_pcm16(audio_np: np.ndarray, orig_sr: int, out_path: Path)
     if peak > 0.98:
         arr = arr / peak * 0.95
     elif 0.01 < peak < 0.35:
-        arr = arr / peak * 0.82
+        arr = arr / peak * 0.85
 
     target_sr = 44100
     if orig_sr != target_sr and arr.size > 1:
@@ -59,14 +90,17 @@ def _resample_to_44100_pcm16(audio_np: np.ndarray, orig_sr: int, out_path: Path)
         wf.setframerate(target_sr)
         wf.writeframes(pcm16.tobytes())
 
+    tempo, presence_db, makeup_db = _derive_beat_dsp_params(emotion_instruct, beat_id, total_beats)
     ffmpeg_exe = get_ffmpeg_exe()
     af_chain = (
-        "atempo=1.18,"
+        "silenceremove=start_periods=1:start_silence=0.02:start_threshold=-42dB:"
+        "stop_periods=-1:stop_silence=0.12:stop_threshold=-42dB,"
+        f"atempo={tempo:.2f},"
         "highpass=f=85,"
-        "equalizer=f=240:t=q:w=1.2:g=2.0,"
-        "equalizer=f=3200:t=q:w=1.2:g=3.2,"
-        "acompressor=threshold=-18dB:ratio=3.5:attack=5:release=60:makeup=3.5dB,"
-        "alimiter=limit=0.95"
+        "equalizer=f=230:t=q:w=1.2:g=2.2,"
+        f"equalizer=f=3300:t=q:w=1.2:g={presence_db:.1f},"
+        f"acompressor=threshold=-19dB:ratio=3.8:attack=4:release=55:makeup={makeup_db:.1f}dB,"
+        "alimiter=limit=0.96"
     )
     try:
         subprocess.run(
@@ -89,8 +123,12 @@ def _resample_to_44100_pcm16(audio_np: np.ndarray, orig_sr: int, out_path: Path)
             stderr=subprocess.DEVNULL,
             check=True,
         )
-        if raw_tmp.exists():
-            raw_tmp.unlink()
+        if out_path.exists() and out_path.stat().st_size > 1000:
+            if raw_tmp.exists():
+                raw_tmp.unlink()
+        else:
+            if raw_tmp.exists():
+                raw_tmp.replace(out_path)
     except Exception:
         if raw_tmp.exists():
             raw_tmp.replace(out_path)
@@ -98,8 +136,17 @@ def _resample_to_44100_pcm16(audio_np: np.ndarray, orig_sr: int, out_path: Path)
     return _get_wav_duration(out_path)
 
 
+# Keep alias for backwards compatibility
+def _resample_to_44100_pcm16(audio_np: np.ndarray, orig_sr: int, out_path: Path) -> float:
+    return _postprocess_beat_audio(audio_np, orig_sr, out_path)
+
+
 def is_qwen_base_model_ready() -> bool:
     return (get_qwen_base_model_dir() / "config.json").exists()
+
+
+def is_qwen_17b_custom_ready() -> bool:
+    return (MODELS_DIR / "qwen3-tts-1.7b" / "config.json").exists()
 
 
 def download_qwen_base_model(log_fn: Optional[Callable[[str], None]] = None) -> Path:
@@ -115,8 +162,43 @@ def download_qwen_base_model(log_fn: Optional[Callable[[str], None]] = None) -> 
     return base_dir
 
 
+def download_qwen_17b_custom_model(log_fn: Optional[Callable[[str], None]] = None) -> Path:
+    """Download Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice (natively supports `instruct` voice acting!)."""
+    global _QWEN_CUSTOM_MODEL
+    dir_17b = MODELS_DIR / "qwen3-tts-1.7b"
+    dir_17b.mkdir(parents=True, exist_ok=True)
+    if (dir_17b / "config.json").exists():
+        return dir_17b
+    os.environ["HF_HUB_DISABLE_XET"] = "1"
+    from huggingface_hub import snapshot_download
+
+    if log_fn:
+        log_fn("[TTS] Downloading Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice (full instruct control)...")
+    snapshot_download("Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice", local_dir=str(dir_17b))
+    _QWEN_CUSTOM_MODEL = None
+    return dir_17b
+
+
+def _unload_other_qwen_model(keep: str) -> None:
+    """Ensure only one Qwen3-TTS model occupies 6GB GPU VRAM at a time."""
+    global _QWEN_CUSTOM_MODEL, _QWEN_BASE_MODEL
+    import torch
+
+    changed = False
+    if keep != "custom" and _QWEN_CUSTOM_MODEL is not None:
+        _QWEN_CUSTOM_MODEL = None
+        changed = True
+    if keep != "base" and _QWEN_BASE_MODEL is not None:
+        _QWEN_BASE_MODEL = None
+        changed = True
+    if changed and torch.cuda.is_available():
+        gc.collect()
+        torch.cuda.empty_cache()
+
+
 def _load_qwen_custom_model(log_fn: Optional[Callable[[str], None]] = None):
     global _QWEN_CUSTOM_MODEL
+    _unload_other_qwen_model(keep="custom")
     if _QWEN_CUSTOM_MODEL is not None:
         return _QWEN_CUSTOM_MODEL
 
@@ -145,10 +227,8 @@ def _load_qwen_custom_model(log_fn: Optional[Callable[[str], None]] = None):
 
 
 def _load_qwen_base_model(log_fn: Optional[Callable[[str], None]] = None):
-    """
-    Lazy-load Alibaba Qwen3-TTS-12Hz-0.6B-Base on CUDA (bfloat16) for zero-shot voice cloning.
-    """
     global _QWEN_BASE_MODEL
+    _unload_other_qwen_model(keep="base")
     if _QWEN_BASE_MODEL is not None:
         return _QWEN_BASE_MODEL
 
@@ -182,14 +262,14 @@ def list_available_voices(default_voice: str = "builtin:male") -> List[Dict]:
     voices: List[Dict] = [
         {
             "id": "builtin:male",
-            "name": "Ryan (Qwen3 Male Narrator)",
+            "name": "Ryan (Qwen3 Dynamic Male)",
             "type": "builtin",
             "gender": "male",
             "is_default": default_voice == "builtin:male",
         },
         {
             "id": "builtin:female",
-            "name": "Serena (Qwen3 Female Narrator)",
+            "name": "Serena (Qwen3 Expressive Female)",
             "type": "builtin",
             "gender": "female",
             "is_default": default_voice == "builtin:female",
@@ -227,8 +307,8 @@ def save_custom_voice_sample(
     transcript: str = "",
 ) -> Dict:
     """
-    Convert any uploaded audio sample (.wav, .mp3, .m4a, .ogg, .flac) into a clean
-    24kHz mono 16-bit PCM WAV (max 20 seconds) in `assets/voices/` for Qwen3-TTS cloning.
+    Convert any uploaded audio sample into a clean, dead-air-trimmed 24kHz mono PCM WAV
+    (max 18s) in `assets/voices/` so cloned prosody starts brisk and energetic.
     """
     VOICES_DIR.mkdir(parents=True, exist_ok=True)
     stem = Path(original_filename).stem
@@ -248,13 +328,15 @@ def save_custom_voice_sample(
                 "-i",
                 str(raw_tmp),
                 "-t",
-                "20",
+                "18",
                 "-ac",
                 "1",
                 "-ar",
                 "24000",
                 "-af",
-                "highpass=f=70,loudnorm=I=-16:TP=-1.5:LRA=11",
+                "silenceremove=start_periods=1:start_silence=0.05:start_threshold=-42dB:"
+                "stop_periods=-1:stop_silence=0.22:stop_threshold=-42dB,"
+                "highpass=f=75,loudnorm=I=-15:TP=-1.2:LRA=9",
                 "-c:a",
                 "pcm_s16le",
                 str(out_wav),
@@ -318,7 +400,7 @@ async def _synthesize_edge_tts_beat(
             else settings.EDGE_TTS_VOICE_MALE
         )
     temp_mp3 = out_wav.with_suffix(".mp3")
-    communicate = edge_tts.Communicate(text=text, voice=voice, rate="+16%", pitch="+2Hz")
+    communicate = edge_tts.Communicate(text=text, voice=voice, rate="+18%", pitch="+2Hz")
     await communicate.save(str(temp_mp3))
 
     ffmpeg_exe = get_ffmpeg_exe()
@@ -327,6 +409,10 @@ async def _synthesize_edge_tts_beat(
         "-y",
         "-i",
         str(temp_mp3),
+        "-af",
+        "silenceremove=start_periods=1:start_silence=0.02:start_threshold=-42dB:"
+        "stop_periods=-1:stop_silence=0.12:stop_threshold=-42dB,"
+        "acompressor=threshold=-18dB:ratio=3.2:makeup=3dB",
         "-ac",
         "1",
         "-ar",
@@ -351,13 +437,13 @@ def synthesize_beats_audio(
     progress_fn: Optional[Callable[[int, str], None]] = None,
 ) -> List[Path]:
     """
-    Synthesize all beats into 44.1kHz mono PCM_16 WAV files (`beat_01.wav`, ...).
-    - If `language == "hi"`: Automatically routes to Indian Hindi neural Edge-TTS (`hi-IN-MadhurNeural` / `hi-IN-SwaraNeural`)
-      since Qwen3-TTS does not support Hindi.
-    - If `language == "en"`: Uses Cloned Voice (`clone:...`), Qwen3-TTS CustomVoice (`Ryan`/`Serena`), or English Edge-TTS.
+    Synthesize each beat individually (avoiding multi-beat batch-padding artifacts) into
+    44.1kHz mono PCM_16 WAV files (`beat_01.wav`, ...), applying per-beat `instruct`
+    (supported natively on 1.7B CustomVoice) + beat-arc dynamic DSP & pause tightening.
     """
     work_dir.mkdir(parents=True, exist_ok=True)
     wav_paths: List[Path] = [work_dir / f"beat_{b.beat_id:02d}.wav" for b in beats]
+    total_beats = max(1, len(beats))
 
     active_profile = (voice_profile or "").strip()
     use_qwen = engine.lower() == "qwen3" or active_profile.startswith("clone:")
@@ -365,7 +451,7 @@ def synthesize_beats_audio(
 
     if use_qwen:
         try:
-            batch_size = 3
+            # 1. Zero-shot Cloned Voice (Qwen3-TTS Base)
             if active_profile.startswith("clone:"):
                 clone_filename = active_profile.split(":", 1)[1]
                 ref_wav = VOICES_DIR / clone_filename
@@ -392,105 +478,92 @@ def synthesize_beats_audio(
                     _VOICE_CLONE_PROMPT_CACHE[clone_filename] = prompt_items
 
                 cached_prompt = _VOICE_CLONE_PROMPT_CACHE[clone_filename]
-                for start_idx in range(0, len(beats), batch_size):
-                    batch = beats[start_idx : start_idx + batch_size]
-                    texts = [b.spoken_text for b in batch]
-                    languages = [qwen_lang for _ in batch]
-
+                for idx, beat_obj in enumerate(beats):
+                    pct = 10 + int(idx / total_beats * 36)
                     if progress_fn:
-                        total_batches = max(1, (len(beats) + batch_size - 1) // batch_size)
-                        cur_batch = start_idx // batch_size + 1
-                        pct = 10 + int((cur_batch - 1) / total_batches * 35)
-                        progress_fn(pct, f"Cloning voice '{clone_filename}' batch {cur_batch}/{total_batches}...")
+                        progress_fn(pct, f"Cloning voice '{clone_filename}' Beat {beat_obj.beat_id}/{total_beats}...")
                     if log_fn:
-                        log_fn(
-                            f"[TTS] Qwen3 Voice Clone '{clone_filename}' batch {start_idx // batch_size + 1} "
-                            f"(beats {batch[0].beat_id}-{batch[-1].beat_id})..."
-                        )
+                        log_fn(f"[TTS] Qwen3 Voice Clone '{clone_filename}' Beat {beat_obj.beat_id}/{total_beats}...")
 
                     wavs, sr = base_model.generate_voice_clone(
-                        text=texts,
-                        language=languages,
+                        text=beat_obj.spoken_text,
+                        language=qwen_lang,
                         voice_clone_prompt=cached_prompt,
+                        non_streaming_mode=True,
+                        temperature=0.86,
+                        top_p=0.92,
+                        repetition_penalty=1.08,
                     )
-                    for offset, audio_arr in enumerate(wavs):
-                        beat_obj = batch[offset]
-                        out_wav = wav_paths[start_idx + offset]
-                        dur = _resample_to_44100_pcm16(audio_arr, int(sr), out_wav)
-                        beat_obj.duration_sec = dur
-
+                    out_wav = wav_paths[idx]
+                    beat_obj.duration_sec = _postprocess_beat_audio(
+                        wavs[0],
+                        int(sr),
+                        out_wav,
+                        emotion_instruct=beat_obj.emotion_instruct,
+                        beat_id=beat_obj.beat_id,
+                        total_beats=total_beats,
+                    )
                 return wav_paths
 
-            # Built-in Qwen3-TTS CustomVoice
+            # 2. Built-in Qwen3-TTS CustomVoice (1.7B honors `instruct`; 0.6B uses Ryan/Serena rhythmic drive + beat DSP)
             model = _load_qwen_custom_model(log_fn=log_fn)
+            model_size = getattr(getattr(model, "model", None), "tts_model_size", "0b6")
+            supports_instruct = "0b6" not in str(model_size).lower()
+
             forced_gender = None
             if active_profile == "builtin:male":
                 forced_gender = "male"
             elif active_profile == "builtin:female":
                 forced_gender = "female"
 
-            for start_idx in range(0, len(beats), batch_size):
-                batch = beats[start_idx : start_idx + batch_size]
-                texts = [b.spoken_text for b in batch]
-                speakers = [
-                    "Serena" if (forced_gender or b.voice_gender) == "female" else "Ryan"
-                    for b in batch
-                ]
-                languages = [qwen_lang for _ in batch]
-                instructs = [
-                    "Deliver at a brisk, energetic, high-conviction pace with strong vocal power and crisp articulation. "
-                    + (
-                        b.emotion_instruct
-                        or "Sound captivated, expressive, and urgent like a gripping viral storyteller."
-                    )
-                    for b in batch
-                ]
+            for idx, beat_obj in enumerate(beats):
+                speaker = "Serena" if (forced_gender or beat_obj.voice_gender) == "female" else "Ryan"
+                beat_instruct = (
+                    beat_obj.emotion_instruct
+                    or "Speak like an extremely engaging, high-energy storyteller. Deliver the words rapidly and confidently, with sharp articulation and animated pitch variation."
+                )
 
+                pct = 10 + int(idx / total_beats * 36)
                 if progress_fn:
-                    total_batches = max(1, (len(beats) + batch_size - 1) // batch_size)
-                    cur_batch = start_idx // batch_size + 1
-                    pct = 10 + int((cur_batch - 1) / total_batches * 35)
-                    progress_fn(pct, f"Qwen3-TTS GPU batch {cur_batch}/{total_batches} (beats {batch[0].beat_id}-{batch[-1].beat_id})...")
+                    progress_fn(pct, f"Qwen3-TTS ({speaker}) Beat {beat_obj.beat_id}/{total_beats}...")
                 if log_fn:
-                    log_fn(
-                        f"[TTS] Qwen3-TTS GPU batch {start_idx // batch_size + 1} "
-                        f"(beats {batch[0].beat_id}-{batch[-1].beat_id}, emotional storytelling mode)..."
-                    )
+                    mode_tag = "1.7B Instruct" if supports_instruct else "0.6B + Dynamic Arc DSP"
+                    log_fn(f"[TTS] Qwen3-TTS ({speaker}, {mode_tag}) Beat {beat_obj.beat_id}/{total_beats}...")
 
-                try:
-                    wavs, sr = model.generate_custom_voice(
-                        text=texts,
-                        language=languages,
-                        speaker=speakers,
-                        instruct=instructs,
-                    )
-                except TypeError:
-                    wavs, sr = model.generate_custom_voice(
-                        text=texts,
-                        language=languages,
-                        speaker=speakers,
-                    )
-
-                for offset, audio_arr in enumerate(wavs):
-                    beat_obj = batch[offset]
-                    out_wav = wav_paths[start_idx + offset]
-                    dur = _resample_to_44100_pcm16(audio_arr, int(sr), out_wav)
-                    beat_obj.duration_sec = dur
+                wavs, sr = model.generate_custom_voice(
+                    text=beat_obj.spoken_text,
+                    language=qwen_lang,
+                    speaker=speaker,
+                    instruct=beat_instruct if supports_instruct else None,
+                    non_streaming_mode=True,
+                    temperature=0.88,
+                    top_p=0.92,
+                    repetition_penalty=1.08,
+                )
+                out_wav = wav_paths[idx]
+                beat_obj.duration_sec = _postprocess_beat_audio(
+                    wavs[0],
+                    int(sr),
+                    out_wav,
+                    emotion_instruct=beat_instruct,
+                    beat_id=beat_obj.beat_id,
+                    total_beats=total_beats,
+                )
 
             return wav_paths
         except Exception as e:
             if log_fn:
-                log_fn(f"[TTS] Qwen3-TTS unavailable or failed ({e}); falling back to English Edge-TTS...")
+                log_fn(f"[TTS] Qwen3-TTS unavailable or failed ({e}); falling back to Edge-TTS...")
 
-    # Edge-TTS synthesis (English or Hindi)
+    # 3. Edge-TTS synthesis (English or Hindi fallback)
     async def _run_all_edge():
         for idx, b in enumerate(beats):
             out_wav = wav_paths[idx]
             if progress_fn:
-                pct = 10 + int(idx / max(1, len(beats)) * 35)
-                progress_fn(pct, f"Edge-TTS ({language.upper()}) synthesizing Beat {b.beat_id}/{len(beats)}...")
+                pct = 10 + int(idx / total_beats * 36)
+                progress_fn(pct, f"Edge-TTS ({language.upper()}) Beat {b.beat_id}/{total_beats}...")
             if log_fn:
-                log_fn(f"[TTS] Edge-TTS ({language.upper()}) synthesizing Beat {b.beat_id}/{len(beats)}...")
+                log_fn(f"[TTS] Edge-TTS ({language.upper()}) Beat {b.beat_id}/{total_beats}...")
             dur = await _synthesize_edge_tts_beat(b.spoken_text, b.voice_gender, out_wav, language=language)
             b.duration_sec = dur
 
