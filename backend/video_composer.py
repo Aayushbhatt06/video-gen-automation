@@ -695,30 +695,70 @@ def cleanup_rendered_artifacts(
     """
     Delete local rendered MP4/SRT and temporary WAV/ASS files after a successful YouTube upload
     to keep disk space free, while preserving the script JSON & story_history.txt for deduplication.
+    Never raises on Windows file-lock errors (e.g. if browser video player still holds a handle).
     """
     import shutil
+    import time
 
     removed_items: List[str] = []
+    locked_items: List[str] = []
+
+    def _safe_unlink(p: Path, label: str) -> None:
+        if not p.exists():
+            return
+        for attempt in range(3):
+            try:
+                p.unlink()
+                removed_items.append(label)
+                return
+            except PermissionError:
+                time.sleep(0.35 * (attempt + 1))
+            except Exception:
+                return
+        locked_items.append(label)
 
     if script.video_path:
         mp4_path = Path(script.video_path)
-        if mp4_path.exists():
-            mp4_path.unlink()
-            removed_items.append(mp4_path.name)
+        _safe_unlink(mp4_path, mp4_path.name)
 
     srt_path = RENDERS_DIR / f"{script.id}.srt"
-    if srt_path.exists():
-        srt_path.unlink()
-        removed_items.append(srt_path.name)
+    _safe_unlink(srt_path, srt_path.name)
 
     temp_work_dir = TEMP_DIR / script.id
     if temp_work_dir.exists() and temp_work_dir.is_dir():
-        shutil.rmtree(temp_work_dir, ignore_errors=True)
-        removed_items.append(f"temp/{script.id}/")
+        try:
+            shutil.rmtree(temp_work_dir, ignore_errors=True)
+            if not temp_work_dir.exists():
+                removed_items.append(f"temp/{script.id}/")
+        except Exception:
+            pass
 
     script.video_path = None
     script.video_url = None
     save_script(script)
 
-    if log_fn and removed_items:
-        log_fn(f"[Cleanup] Freed local storage after YouTube upload (removed {', '.join(removed_items)}; kept script & story history).")
+    if log_fn:
+        if removed_items:
+            log_fn(f"[Cleanup] Freed local storage after YouTube upload (removed {', '.join(removed_items)}; kept script & story history).")
+        if locked_items:
+            log_fn(f"[Cleanup] Deferred deletion for locked preview file(s): {', '.join(locked_items)} (will auto-clean on next background sweep).")
+
+
+def sweep_orphaned_renders() -> int:
+    """Delete any leftover MP4/SRT files whose scripts are already scheduled/published and cleared."""
+    from backend.llm_engine import list_scripts
+
+    cleaned = 0
+    cleared_ids = {
+        s.id for s in list_scripts() if s.youtube_video_id and not s.video_path
+    }
+    for sid in cleared_ids:
+        for ext in (".mp4", ".srt"):
+            f = RENDERS_DIR / f"{sid}{ext}"
+            if f.exists():
+                try:
+                    f.unlink()
+                    cleaned += 1
+                except Exception:
+                    pass
+    return cleaned

@@ -21,7 +21,7 @@ from backend.scheduler import (
     update_slot_after_upload,
 )
 from backend.story_memory import pick_next_autonomous_preset
-from backend.video_composer import cleanup_rendered_artifacts, render_short_project
+from backend.video_composer import cleanup_rendered_artifacts, render_short_project, sweep_orphaned_renders
 from backend.youtube_uploader import (
     get_youtube_auth_status,
     promote_unlisted_video_to_public,
@@ -188,6 +188,7 @@ class AutomationManager:
         while True:
             try:
                 self.check_and_publish_due_slots()
+                sweep_orphaned_renders()
             except Exception as e:
                 self.log(f"[Scheduler Tick] Warning while checking due slots: {e}")
             time.sleep(60)

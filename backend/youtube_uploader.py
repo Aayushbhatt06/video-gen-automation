@@ -211,14 +211,26 @@ def upload_short_scheduled(
     request = service.videos().insert(part="snippet,status", body=body, media_body=media)
 
     response = None
-    while response is None:
-        status, response = request.next_chunk()
-        if status:
-            pct = int(status.progress() * 100)
-            if progress_fn:
-                progress_fn(pct, f"Uploading to YouTube ({pct}%)...")
-            if log_fn:
-                log_fn(f"[YouTube] Upload progress: {pct}%...")
+    try:
+        while response is None:
+            status, response = request.next_chunk()
+            if status:
+                pct = int(status.progress() * 100)
+                if progress_fn:
+                    progress_fn(pct, f"Uploading to YouTube ({pct}%)...")
+                if log_fn:
+                    log_fn(f"[YouTube] Upload progress: {pct}%...")
+    finally:
+        # Release Windows file handle immediately so post-upload cleanup can delete the MP4
+        try:
+            fd = getattr(media, "_fd", None)
+            if fd is not None and not fd.closed:
+                fd.close()
+        except Exception:
+            pass
+        del media
+        import gc
+        gc.collect()
 
     video_id = response.get("id")
     actual_privacy = (response.get("status") or {}).get("privacyStatus", "private")
