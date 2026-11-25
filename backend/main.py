@@ -406,11 +406,18 @@ def _schedule_and_upload_scheduled(script: ScriptSchema) -> Dict:
     if not slot:
         raise RuntimeError("No free schedule slots available within MAX_DAYS_AHEAD")
 
+    prev_phase = automation_manager.phase
+    automation_manager.phase = "uploading_youtube"
+    automation_manager.current_script_id = script.id
+    automation_manager.current_script_title = script.title
+    automation_manager.set_progress(1, f"Uploading to YouTube ({slot.slot_local_display})...")
+
     try:
         res = upload_short_scheduled(
             script,
             publish_at_iso=slot.slot_iso,
             log_fn=automation_manager.log,
+            progress_fn=automation_manager.set_progress,
         )
         vid_id = res["video_id"]
         updated_slot = update_slot_after_upload(
@@ -426,6 +433,7 @@ def _schedule_and_upload_scheduled(script: ScriptSchema) -> Dict:
         script.status = "scheduled_public"
         save_script(script)
         cleanup_rendered_artifacts(script, log_fn=automation_manager.log)
+        automation_manager.set_progress(100, f"Scheduled for {slot.slot_local_display}!")
         return {
             "script": script,
             "slot": updated_slot,
@@ -434,6 +442,12 @@ def _schedule_and_upload_scheduled(script: ScriptSchema) -> Dict:
     except Exception as e:
         release_or_fail_slot(slot.slot_id, str(e), remove_completely=True)
         raise
+    finally:
+        if not automation_manager.active:
+            automation_manager.phase = prev_phase if prev_phase == "idle" else "idle"
+            automation_manager.current_script_id = None
+            automation_manager.current_script_title = None
+            automation_manager.set_progress(0, "Idle")
 
 
 @app.post("/api/scripts/{script_id}/schedule-youtube")

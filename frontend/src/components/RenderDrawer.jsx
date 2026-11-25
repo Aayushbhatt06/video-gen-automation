@@ -1,9 +1,16 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Terminal, ChevronUp, ChevronDown } from "lucide-react";
 
 export default function RenderDrawer({ logs }) {
   const [open, setOpen] = useState(false);
+  const scrollRef = useRef(null);
   const latest = logs?.[logs.length - 1];
+
+  useEffect(() => {
+    if (open && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [logs, open]);
 
   return (
     <div className="bg-slate-950 border-t border-slate-800 text-xs">
@@ -25,7 +32,10 @@ export default function RenderDrawer({ logs }) {
       </div>
 
       {open && (
-        <div className="h-44 overflow-y-auto px-4 py-2.5 bg-slate-950/95 border-t border-slate-900 font-mono text-[11px] space-y-1">
+        <div
+          ref={scrollRef}
+          className="h-44 overflow-y-auto px-4 py-2.5 bg-slate-950/95 border-t border-slate-900 font-mono text-[11px] space-y-1"
+        >
           {(logs || []).map((entry, idx) => (
             <div key={idx} className="text-slate-300 leading-relaxed">
               <span className="text-slate-500 mr-2">[{entry.time}]</span>

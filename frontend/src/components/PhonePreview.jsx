@@ -160,7 +160,7 @@ export default function PhonePreview({
                 {uploadingYt ? (
                   <>
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    Uploading Unlisted...
+                    {isCurrentActive ? `Uploading ${automation.progress_pct}%...` : "Uploading & Scheduling..."}
                   </>
                 ) : (
                   <>
