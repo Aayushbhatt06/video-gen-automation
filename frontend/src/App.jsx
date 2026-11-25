@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Sparkles,
   Settings,
@@ -21,6 +21,14 @@ export default function App() {
   const [health, setHealth] = useState(null);
   const [scripts, setScripts] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
+  const selectedIdRef = useRef(null);
+  const userClearedRef = useRef(false);
+
+  const selectScript = (id) => {
+    userClearedRef.current = id === null;
+    selectedIdRef.current = id;
+    setSelectedId(id);
+  };
   const [backgrounds, setBackgrounds] = useState([]);
   const [voicesData, setVoicesData] = useState(null);
   const [scheduleData, setScheduleData] = useState(null);
@@ -54,8 +62,8 @@ export default function App() {
       setScheduleData(schedRes);
       setVoicesData(vRes);
 
-      if (!selectedId && scList.length > 0) {
-        setSelectedId(scList[0].id);
+      if (!selectedIdRef.current && !userClearedRef.current && scList.length > 0) {
+        selectScript(scList[0].id);
       }
     } catch (e) {
       console.error("Failed to fetch studio state:", e);
@@ -65,24 +73,7 @@ export default function App() {
   useEffect(() => {
     refreshAll();
     const interval = setInterval(refreshAll, 1500);
-    const handleToggleLanguage = async (nextLang) => {
-    try {
-      await api.updateSettings({ default_language: nextLang });
-      await refreshAll();
-      showToast(
-        nextLang === "hi"
-          ? "Switched to Hindi Voiceover (Captions, Title, Description & Tags stay English)"
-          : "Switched to English-only mode",
-        "success"
-      );
-    } catch (e) {
-      showToast(`Language switch failed: ${e.message}`, "error");
-    }
-  };
-
-  const activeLanguage = health?.language || "en";
-
-  return () => clearInterval(interval);
+    return () => clearInterval(interval);
   }, []);
 
   const selectedScript = scripts.find((s) => s.id === selectedId) || null;
@@ -92,7 +83,7 @@ export default function App() {
     try {
       const created = await api.generateScript(payload);
       await refreshAll();
-      setSelectedId(created.id);
+      selectScript(created.id);
       setActiveTab("studio");
       showToast(`Generated unique story: "${created.title}"`, "success");
     } catch (e) {
@@ -133,8 +124,8 @@ export default function App() {
       await api.deleteScript(id);
       const next = scripts.filter((s) => s.id !== id);
       setScripts(next);
-      if (selectedId === id) {
-        setSelectedId(next[0]?.id || null);
+      if (selectedIdRef.current === id) {
+        selectScript(next[0]?.id || null);
       }
     } catch (e) {
       showToast(`Delete failed: ${e.message}`, "error");
@@ -327,7 +318,7 @@ export default function App() {
 
           <button
             onClick={() => {
-              setSelectedId(null);
+              selectScript(null);
               setActiveTab("studio");
             }}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition"
@@ -374,7 +365,7 @@ export default function App() {
           scripts={scripts}
           selectedId={selectedId}
           onSelect={(id) => {
-            setSelectedId(id);
+            selectScript(id);
             setActiveTab("studio");
           }}
           onDelete={handleDeleteScript}
