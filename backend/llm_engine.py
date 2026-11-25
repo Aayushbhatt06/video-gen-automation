@@ -247,7 +247,7 @@ Return ONLY valid JSON (no Markdown fences, no commentary) matching this exact s
       "emotion_instruct": "Speak with very high energy and immediate urgency. Use a brisk, punchy delivery, sharp articulation, and animated pitch variation.",
       "spoken_text": "The actual narration for this beat in the requested voiceover language.",
       "en_subtitle": "Strictly English punchy caption matching this beat.",
-      "sfx_cue": "whoosh"
+      "sfx_cue": "none"
     }
   ]
 }
@@ -471,7 +471,7 @@ MANDATORY EXECUTION CHECKLIST:
    - Final Beat: Natural Seamless Loop connecting back to Beat 1.
 3. Give EVERY beat a distinct, vivid, high-energy `emotion_instruct` tailored to that beat's exact moment (brisk speaking rate, strong vocal presence, animated pitch variation). NEVER use "steady conversational pace" and NEVER repeat the same `emotion_instruct` across beats.
 4. Punctuation in `spoken_text`: Use ONLY full stops (`.` or `।`), commas (`,`), `?`, and occasional `!`. Zero ellipses (`...`) and zero em-dashes (`—`).
-5. `sfx_cue` on each beat must be one of: `"none"`, `"pop"`, `"whoosh"`, `"ding"`, `"vine_boom"` (use sparingly on 2-4 key beats like the hook, revelation, and twist).
+5. Set `sfx_cue` to `"none"` on every beat (do NOT add sound effects; let the clean storytelling voice carry the Short).
 
 Return ONLY valid JSON matching Section 9 OUTPUT FORMAT."""
 
@@ -523,9 +523,7 @@ Return ONLY valid JSON matching Section 9 OUTPUT FORMAT."""
         spoken = _clean_spoken_text_for_tts(str(b.get("spoken_text") or ""))
         if not spoken:
             continue
-        sfx = str(b.get("sfx_cue") or "none").lower().strip()
-        if sfx not in allowed_sfx:
-            sfx = "none"
+        sfx = "none"
         gender = str(b.get("voice_gender") or voice_gender).lower().strip()
         if gender not in {"male", "female"}:
             gender = voice_gender if voice_gender in {"male", "female"} else "male"

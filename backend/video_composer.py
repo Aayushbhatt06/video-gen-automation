@@ -209,47 +209,30 @@ def ensure_default_gameplay_clip(log_fn: Optional[Callable[[str], None]] = None)
     return starter_path
 
 
-def _generate_procedural_sfx(cue: str, sr: int = 44100) -> np.ndarray:
-    """Synthesize subtle, clean punchline SFX if no custom WAV exists in assets/sfx/."""
-    if cue == "pop":
-        dur = 0.09
-        t = np.linspace(0, dur, int(sr * dur), endpoint=False)
-        freq = np.linspace(520, 140, len(t))
-        env = np.exp(-t * 35)
-        wave_arr = np.sin(2 * np.pi * freq * t) * env * 0.28
-        return wave_arr.astype(np.float32)
-    if cue == "ding":
-        dur = 0.32
-        t = np.linspace(0, dur, int(sr * dur), endpoint=False)
-        env = np.exp(-t * 9)
-        wave_arr = (np.sin(2 * np.pi * 1046.5 * t) + 0.4 * np.sin(2 * np.pi * 2093.0 * t)) * env * 0.22
-        return wave_arr.astype(np.float32)
-    if cue == "vine_boom":
-        dur = 0.45
-        t = np.linspace(0, dur, int(sr * dur), endpoint=False)
-        freq = np.linspace(110, 38, len(t))
-        env = np.exp(-t * 5.5)
-        wave_arr = np.tanh(np.sin(2 * np.pi * np.cumsum(freq) / sr) * 2.2) * env * 0.34
-        return wave_arr.astype(np.float32)
-    if cue == "whoosh":
-        dur = 0.22
-        t = np.linspace(0, dur, int(sr * dur), endpoint=False)
-        noise = np.random.normal(0, 1, len(t)).astype(np.float32)
-        env = np.sin(np.pi * (t / dur)) ** 2
-        wave_arr = noise * env * 0.16
-        return wave_arr.astype(np.float32)
-    return np.zeros(0, dtype=np.float32)
+def _load_custom_sfx_if_exists(cue: str, sr: int = 44100) -> np.ndarray:
+    """Only mix real user-provided SFX WAV files from `assets/sfx/` (never synthetic noise/sine waves)."""
+    sfx_wav = SFX_DIR / f"{cue}.wav"
+    if not sfx_wav.exists():
+        return np.zeros(0, dtype=np.float32)
+    try:
+        with wave.open(str(sfx_wav), "rb") as wf:
+            raw = wf.readframes(wf.getnframes())
+            arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+            if wf.getnchannels() > 1:
+                arr = arr.reshape(-1, wf.getnchannels()).mean(axis=1)
+            return (arr * 0.25).astype(np.float32)
+    except Exception:
+        return np.zeros(0, dtype=np.float32)
 
 
 def assemble_master_voice_and_sfx(
     beats: List[BeatSchema],
     beat_wavs: List[Path],
     out_master_wav: Path,
-    inter_beat_gap_sec: float = 0.14,
+    inter_beat_gap_sec: float = 0.07,
 ) -> float:
     """
-    Concatenate beat WAVs at 44100 Hz mono with natural 140ms breath pauses,
-    layer subtle SFX on cue beats, and normalize peak level cleanly.
+    Concatenate beat WAVs at 44100 Hz mono with crisp 70ms breath gaps and normalize peak cleanly.
     """
     sr = 44100
     gap_samples = int(round(inter_beat_gap_sec * sr))
@@ -259,10 +242,12 @@ def assemble_master_voice_and_sfx(
     for idx, (beat, wav_path) in enumerate(zip(beats, beat_wavs)):
         with wave.open(str(wav_path), "rb") as wf:
             raw = wf.readframes(wf.getnframes())
-            pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+            pcm = np.frombuffer(raw, dtype=np.float32 if wf.getsampwidth() == 4 else np.int16).astype(np.float32)
+            if wf.getsampwidth() == 2:
+                pcm = pcm / 32768.0
 
         if beat.sfx_cue and beat.sfx_cue != "none":
-            sfx_arr = _generate_procedural_sfx(beat.sfx_cue, sr=sr)
+            sfx_arr = _load_custom_sfx_if_exists(beat.sfx_cue, sr=sr)
             if sfx_arr.size > 0 and pcm.size > 0:
                 mix_len = min(len(pcm), len(sfx_arr))
                 pcm[:mix_len] = np.clip(pcm[:mix_len] + sfx_arr[:mix_len], -0.98, 0.98)
