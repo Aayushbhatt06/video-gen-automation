@@ -93,7 +93,10 @@ async def lifespan(app: FastAPI):
     _sync_env_from_sibling_if_needed()
     ensure_default_gameplay_clip(log_fn=automation_manager.log)
     automation_manager.start_background_publisher_daemon()
-    automation_manager.log("[Server] Faceless Shorts Studio v2 Backend ready (English-only + YT Multi-Day Scheduler).")
+    if getattr(automation_manager, "_persisted_active", False):
+        automation_manager.log("[Server] Resuming active Autonomous Automation loop from persisted state...")
+        automation_manager.start_automation()
+    automation_manager.log("[Server] Faceless Shorts Studio v2 Backend ready (English/Hindi + YT Multi-Day Scheduler).")
     yield
 
 

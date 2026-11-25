@@ -58,6 +58,7 @@ class AutomationManager:
         self._worker_thread: Optional[threading.Thread] = None
         self._publisher_thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
+        self._persisted_active: bool = False
         self._load_persisted_state()
 
     def _load_persisted_state(self) -> None:
@@ -65,6 +66,7 @@ class AutomationManager:
             try:
                 data = json.loads(AUTOMATION_STATE_JSON.read_text(encoding="utf-8"))
                 self.cycles_completed = int(data.get("cycles_completed", 0))
+                self._persisted_active = bool(data.get("active", False))
             except Exception:
                 pass
 

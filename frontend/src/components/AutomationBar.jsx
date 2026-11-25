@@ -35,7 +35,8 @@ export default function AutomationBar({
     phase === "generating_story" ||
     phase === "rendering_video" ||
     phase === "uploading_youtube" ||
-    phase === "waiting_queue";
+    phase === "waiting_queue" ||
+    phase === "cooldown";
   const pct = automation?.progress_pct ?? 0;
   const stage = automation?.progress_stage || PHASE_LABELS[phase] || phase;
   const queuedCount = (automation?.queued_renders || []).length;
